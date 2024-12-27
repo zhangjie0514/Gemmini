@@ -36,30 +36,30 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
     val out = Decoupled(new BeatMergerOut(spadWidth, accWidth, spadRows, accRows, alignedTo))
   })
 
-  val beatBytes = beatBits/8
-  val spadWidthBytes = spadWidth/8
-  val accWidthBytes = accWidth/8
+  val beatBytes = beatBits/8       //每个节拍的字节数?
+  val spadWidthBytes = spadWidth/8 //SPAD行的字节宽度
+  val accWidthBytes = accWidth/8   //累加器行的字节宽度
 
   val req = Reg(UDValid(new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds)))
 
-  val buflen = maxReqBytes max spadWidthBytes max accWidthBytes // in bytes
-  val buffer = Reg(UInt((buflen*8).W))
+  val buflen = maxReqBytes max spadWidthBytes max accWidthBytes // in bytes;缓冲区长度
+  val buffer = Reg(UInt((buflen*8).W)) //缓冲区
 
-  val rowBytes = Mux(req.bits.has_acc_bitwidth, accWidthBytes.U, spadWidthBytes.U)
+  val rowBytes = Mux(req.bits.has_acc_bitwidth, accWidthBytes.U, spadWidthBytes.U) //当前行的字节数
 
-  val bytesSent = Reg(UInt(log2Up(buflen+1).W))
-  val bytesRead = Reg(UInt(log2Up(buflen+1).W))
-  val bytesReadAfterShift = Mux(bytesRead > req.bits.shift, bytesRead - req.bits.shift, 0.U)
-  val bytesDiscarded = bytesRead - bytesReadAfterShift
-  val usefulBytesRead = minOf(bytesReadAfterShift, req.bits.bytes_to_read)
+  val bytesSent = Reg(UInt(log2Up(buflen+1).W)) //已发送的字节数
+  val bytesRead = Reg(UInt(log2Up(buflen+1).W)) //已读取的字节数
+  val bytesReadAfterShift = Mux(bytesRead > req.bits.shift, bytesRead - req.bits.shift, 0.U) //读取字节数在移位后的结果
+  val bytesDiscarded = bytesRead - bytesReadAfterShift //被丢弃的字节数
+  val usefulBytesRead = minOf(bytesReadAfterShift, req.bits.bytes_to_read) //有用的读取字节数
 
-  val bytesSent_next = {
+  val bytesSent_next = { //下一步发送的字节数
     val spad_row_offset = Mux(bytesSent === 0.U, req.bits.spad_row_offset, 0.U)
     satAdd(bytesSent, rowBytes - spad_row_offset, req.bits.bytes_to_read)
   }
 
-  val last_sending = bytesSent_next === req.bits.bytes_to_read
-  val last_reading = beatBytes.U >= (1.U << req.bits.lg_len_req).asUInt - bytesRead
+  val last_sending = bytesSent_next === req.bits.bytes_to_read //表示这是最后一个发送操作
+  val last_reading = beatBytes.U >= (1.U << req.bits.lg_len_req).asUInt - bytesRead //表示是否是最后的读取操作
 
   io.req.ready := !req.valid
 
@@ -67,13 +67,13 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
 
   io.out.valid := req.valid && usefulBytesRead > bytesSent && (usefulBytesRead - bytesSent >= rowBytes ||
     usefulBytesRead === req.bits.bytes_to_read)
-  io.out.bits.data := (buffer >> (bytesSent * 8.U)) << Mux(bytesSent === 0.U, req.bits.spad_row_offset * 8.U, 0.U)
-  io.out.bits.mask := VecInit((0 until (spadWidthBytes max accWidthBytes) by alignedTo).map { i =>
+  io.out.bits.data := (buffer >> (bytesSent * 8.U)) << Mux(bytesSent === 0.U, req.bits.spad_row_offset * 8.U, 0.U) //输出的数据
+  io.out.bits.mask := VecInit((0 until (spadWidthBytes max accWidthBytes) by alignedTo).map { i => //输出的数据掩码
     val spad_row_offset = Mux(bytesSent === 0.U, req.bits.spad_row_offset, 0.U)
     i.U >= spad_row_offset &&
       i.U < spad_row_offset +& (req.bits.bytes_to_read - bytesSent)
   })
-  io.out.bits.addr := req.bits.addr + req.bits.block_stride * {
+  io.out.bits.addr := req.bits.addr + req.bits.block_stride * { //输出的数据地址（spad）
     val total_bytes_sent = req.bits.spad_row_offset + bytesSent
     Mux(req.bits.has_acc_bitwidth,
       // We only add "if" statements here to satisfy the Verilator linter. The code would be cleaner without the

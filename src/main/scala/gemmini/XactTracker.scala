@@ -64,21 +64,23 @@ class XactTracker[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidt
     val counter = new CounterEventIO()
   })
 
-  val entries = Reg(Vec(nXacts, UDValid(new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds))))
+  val entries = Reg(Vec(nXacts, UDValid(new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds))))//nXacts:可以同时跟踪的最大事务数量
 
-  val free_entry = MuxCase((nXacts-1).U, entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
+  val free_entry = MuxCase((nXacts-1).U, entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })//查找第一个空闲的事务槽位，如果所有槽位都被占用，则选择最后一个槽位作为备用
   io.alloc.ready := !entries.map(_.valid).reduce(_ && _)
-  io.alloc.xactid := free_entry
+  io.alloc.xactid := free_entry//将空闲事务槽位的索引作为事务ID，分配给外部模块，以便外部模块记录和使用
 
-  io.peek.entry := entries(io.peek.xactid).bits
+  io.peek.entry := entries(io.peek.xactid).bits//将指定事务ID的事务条目详细信息输出给外部模块，使外部模块能够查看和处理该事务的信息
 
-  io.busy := entries.map(_.valid).reduce(_ || _)
+  io.busy := entries.map(_.valid).reduce(_ || _)//当有任何事务槽位被占用时，io.busy 为 true，表示 XactTracker 正在处理事务；否则为 false，表示模块空闲
 
+  //当新的事务分配请求被接受时，XactTracker 将其记录到对应的事务槽位，并将该槽位标记为有效
   when (io.alloc.fire()) {
     entries(free_entry).valid := true.B
     entries(free_entry).bits := io.alloc.entry
   }
 
+  //指定事务弹出后，将该槽位指定为无效
   when (io.peek.pop) {
     entries(io.peek.xactid).valid := false.B
     assert(entries(io.peek.xactid).valid)

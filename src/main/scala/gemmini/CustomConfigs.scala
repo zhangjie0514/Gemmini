@@ -11,6 +11,7 @@ object GemminiCustomConfigs {
   // Default configurations
   val defaultConfig = GemminiConfigs.defaultConfig
   val defaultFpConfig = GemminiFPConfigs.defaultFPConfig
+  //val defaultFpConfig = GemminiFPConfigs.FP32DefaultConfig
 
   // Create your own configs here
   val baselineInferenceConfig = defaultConfig.copy(
@@ -56,6 +57,7 @@ object GemminiCustomConfigs {
 
 class GemminiCustomConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiCustomConfigs.customConfig
+  //gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiCustomConfigs.defaultFpConfig
 ) extends Config((site, here, up) => {
   case BuildRoCC => up(BuildRoCC) ++ Seq(
     (p: Parameters) => {

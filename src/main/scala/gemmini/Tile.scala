@@ -28,10 +28,10 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
     val out_b       = Output(Vec(columns, outputType))
 
     val out_control = Output(Vec(columns, new PEControl(accType)))
-    val out_id      = Output(Vec(columns, UInt(log2Up(max_simultaneous_matmuls).W)))
+    val out_id      = Output(Vec(columns, UInt(log2Up(max_simultaneous_matmuls).W))) 
     val out_last    = Output(Vec(columns, Bool()))
 
-    val in_valid = Input(Vec(columns, Bool()))
+    val in_valid = Input(Vec(columns, Bool())) 
     val out_valid = Output(Vec(columns, Bool()))
 
     val bad_dataflow = Output(Bool())
@@ -44,6 +44,7 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
 
   // TODO: abstract hori/vert broadcast, all these connections look the same
   // Broadcast 'a' horizontally across the Tile
+  //每一行中PE的out_a接到下一个PE的in_a上
   for (r <- 0 until rows) {
     tile(r).foldLeft(io.in_a(r)) {
       case (in_a, pe) =>
@@ -53,6 +54,7 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
   }
 
   // Broadcast 'b' vertically across the Tile
+  //每一列中PE的out_b接到下一个PE的in_b上;tree_reduction为1时置零
   for (c <- 0 until columns) {
     tileT(c).foldLeft(io.in_b(c)) {
       case (in_b, pe) =>
@@ -62,6 +64,7 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
   }
 
   // Broadcast 'd' vertically across the Tile
+  //每一列中PE的out_c接到下一个PE的in_d上
   for (c <- 0 until columns) {
     tileT(c).foldLeft(io.in_d(c)) {
       case (in_d, pe) =>
@@ -71,6 +74,7 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
   }
 
   // Broadcast 'control' vertically across the Tile
+  //control按列连接
   for (c <- 0 until columns) {
     tileT(c).foldLeft(io.in_control(c)) {
       case (in_ctrl, pe) =>
@@ -80,6 +84,7 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
   }
 
   // Broadcast 'garbage' vertically across the Tile
+  //valid按列连接
   for (c <- 0 until columns) {
     tileT(c).foldLeft(io.in_valid(c)) {
       case (v, pe) =>
@@ -89,6 +94,7 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
   }
 
   // Broadcast 'id' vertically across the Tile
+  //id按列连接
   for (c <- 0 until columns) {
     tileT(c).foldLeft(io.in_id(c)) {
       case (id, pe) =>
@@ -98,6 +104,7 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
   }
 
   // Broadcast 'last' vertically across the Tile
+  //last按列连接
   for (c <- 0 until columns) {
     tileT(c).foldLeft(io.in_last(c)) {
       case (last, pe) =>

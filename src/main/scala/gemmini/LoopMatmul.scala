@@ -13,15 +13,20 @@ import Util._
 // LdA
 
 class LoopMatmulLdAReq(val block_size: Int, val coreMaxAddrBits: Int, val iterator_bitwidth: Int, val max_addr: Int, val concurrent_loops: Int) extends Bundle {
-  val max_i = UInt(iterator_bitwidth.W)
-  val max_k = UInt(iterator_bitwidth.W)
-  val pad_i = UInt(log2Up(block_size).W)
-  val pad_k = UInt(log2Up(block_size).W)
-  val dram_addr = UInt(coreMaxAddrBits.W)
-  val dram_stride = UInt(coreMaxAddrBits.W)
-  val transpose = Bool()
-  val addr_start = UInt(log2Up(max_addr).W)
-  val loop_id = UInt(log2Up(concurrent_loops).W)
+  //block_size: 矩阵块的大小
+  //coreMaxAddrBits: 用于表示 DRAM 地址的位宽
+  //iterator_bitwidth: 用于表示迭代器（i 和 k）的位宽
+  //max_addr: 用于表示最大地址范围
+  //concurrent_loops: 表示可以同时进行的循环数量
+  val max_i = UInt(iterator_bitwidth.W)//表示矩阵乘法中 i 维度的最大值，通常用于控制矩阵块的迭代范围
+  val max_k = UInt(iterator_bitwidth.W)//表示矩阵乘法中 k 维度的最大值，通常用于控制矩阵块的迭代范围
+  val pad_i = UInt(log2Up(block_size).W)//填充（padding）通常用于处理矩阵的维度不是块大小的整数倍的情况。通过填充，可以确保矩阵块的大小与硬件的处理能力对齐
+  val pad_k = UInt(log2Up(block_size).W)//填充（padding）通常用于处理矩阵的维度不是块大小的整数倍的情况。通过填充，可以确保矩阵块的大小与硬件的处理能力对齐
+  val dram_addr = UInt(coreMaxAddrBits.W)//表示矩阵 A 在 DRAM 中的起始地址
+  val dram_stride = UInt(coreMaxAddrBits.W)//表示在 DRAM 中矩阵的行步长（stride）。步长用于在内存中访问矩阵的不同行
+  val transpose = Bool()//表示是否对矩阵 A 进行转置操作
+  val addr_start = UInt(log2Up(max_addr).W)//表示矩阵 A 在 DRAM 中的起始地址的索引?
+  val loop_id = UInt(log2Up(concurrent_loops).W)//表示当前循环的 ID,在并行执行多个循环时，loop_id 用于区分不同的循环
 }
 
 class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_addr: Int, input_w: Int,

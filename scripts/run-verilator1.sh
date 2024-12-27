@@ -1,13 +1,12 @@
 #!/bin/bash
 
 ROOT="$PWD/"
-
 WAVEFORM="waveforms/waveform.vcd"
 
 help () {
   echo "Run a RISCV Gemmini program on Verilator, a cycle-accurate simulator"
   echo
-  echo "Usage: $0 [--pk] [--debug] BINARY"
+  echo "Usage: $0 [--pk] [--debug] BINARY [EXTRA_ARGS]"
   echo
   echo "Options:"
   echo " pk      Run binaries on the proxy kernel, which enables virtual memory"
@@ -21,11 +20,13 @@ help () {
   echo '         name of a program in `software/gemmini-rocc-tests`, or it can'
   echo "         be the full path to a binary you compiled."
   echo
+  echo " EXTRA_ARGS Optional simulation arguments like +verbose"
+  echo
   echo "Examples:"
   echo "         $0 template"
   echo "         $0 --debug template"
   echo "         $0 --pk mvin_mvout"
-  echo "         $0 path/to/binary-baremetal"
+  echo "         $0 path/to/binary-baremetal +verbose"
   echo
   echo 'Note:    Run this command after running `scripts/build-verilator.sh` or'
   echo '         `scripts/build-verilator.sh --debug`.'
@@ -40,15 +41,19 @@ pk=0
 debug=0
 show_help=0
 binary=""
+extra_args=""
 
 while [ $# -gt 0 ] ; do
   case $1 in
     --pk) pk=1 ;;
     --debug) debug=1 ;;
     -h | --help) show_help=1 ;;
-    *) binary=$1
+    *) if [[ $1 == +* ]]; then
+         extra_args="$extra_args $1"
+       else
+         binary=$1
+       fi ;;
   esac
-
   shift
 done
 
@@ -66,7 +71,6 @@ fi
 
 if [ $debug -eq 1 ]; then
     DEBUG="-debug -v ${ROOT}${WAVEFORM}"
-    #DEBUG="-debug"
 else
     DEBUG=""
 fi
@@ -89,7 +93,4 @@ if [ ! -f "${full_binary_path}" ]; then
 fi
 
 cd ../../sims/verilator/
-#./simulator-chipyard-CustomGemminiSoCConfig${DEBUG} +verbose $PK ${full_binary_path} 
-#./simulator-chipyard.harness-CustomGemminiSoCConfig${DEBUG} $PK ${full_binary_path}
-./simulator-chipyard.harness-CustomGemminiSoCConfig${DEBUG} $PK ${full_binary_path} #+verbose
-#./simulator-chipyard.harness-CustomGemminiSoCConfig${DEBUG} $PK ${full_binary_path} #+verbose
+./simulator-chipyard.harness-CustomGemminiSoCConfig${DEBUG} $PK ${full_binary_path} $extra_args

@@ -19,9 +19,14 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
                                    max_simultaneous_matmuls: Int, output_delay: Int,
                                    val tileRows: Int, val tileColumns: Int,
                                    val meshRows: Int, val meshColumns: Int) extends Module {
+//tile_latency: 每个单元的延迟
+//max_simultaneous_matmuls: 最大同时乘法矩阵的数量
+//output_delay: 输出的延迟  
+//tileRows和tileColumns: 每个Tile的行和列数
+//meshRows和meshColumns: 网格的行和列数                                
   val io = IO(new Bundle {
-    val in_a = Input(Vec(meshRows, Vec(tileRows, inputType)))
-    val in_b = Input(Vec(meshColumns, Vec(tileColumns, inputType)))
+    val in_a = Input(Vec(meshRows, Vec(tileRows, inputType)))//横着
+    val in_b = Input(Vec(meshColumns, Vec(tileColumns, inputType)))//竖着
     val in_d = Input(Vec(meshColumns, Vec(tileColumns, inputType)))
     val in_control = Input(Vec(meshColumns, Vec(tileColumns, new PEControl(accType))))
     val in_id = Input(Vec(meshColumns, Vec(tileColumns, UInt(log2Up(max_simultaneous_matmuls).W)))) // The unique id of this particular matmul
@@ -38,7 +43,8 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   // mesh(r)(c) => Tile at row r, column c
   val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, outputType, accType, df, tree_reduction, max_simultaneous_matmuls, tileRows, tileColumns)))
   val meshT = mesh.transpose
-
+  //这个函数最后返回的是一个类型为T的信号，它是输入数据t经过指定延迟后得到的输出信号。具体来说，这个信号在latency个时钟周期后会反映输入数据t的值，并
+  //且保持有效性信号valid的状态。
   def pipe[T <: Data](valid: Bool, t: T, latency: Int): T = {
     // The default "Pipe" function apparently resets the valid signals to false.B. We would like to avoid using global
     // signals in the Mesh, so over here, we make it clear that the reset signal will never be asserted

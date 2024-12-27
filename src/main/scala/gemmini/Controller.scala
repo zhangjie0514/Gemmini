@@ -17,8 +17,8 @@ import Util._
 class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val cmd = new RoCCCommand
   val rob_id = UDValid(UInt(log2Up(rob_entries).W))
-  val from_matmul_fsm = Bool()
-  val from_conv_fsm = Bool()
+  val from_matmul_fsm = Bool()//该命令是否来自矩阵乘法状态机
+  val from_conv_fsm = Bool()  //该命令是否来自卷积状态机
 }
 
 class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiArrayConfig[T, U, V])
@@ -51,7 +51,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   import outer.spad
 
   val ext_mem_io = if (use_shared_ext_mem) Some(IO(new ExtSpadMemIO(sp_banks, acc_banks, acc_sub_banks))) else None
-  ext_mem_io.foreach(_ <> outer.spad.module.io.ext_mem.get)
+  ext_mem_io.foreach(_ <> outer.spad.module.io.ext_mem.get)//在共享外部内存时，将ext_mem_io 的输入和输出与 outer.spad.module.io.ext_mem.get 连接起来
 
   val tagWidth = 32
 
@@ -68,15 +68,17 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   implicit val edge = outer.spad.id_node.edges.out.head
   val tlb = Module(new FrontendTLB(2, tlb_size, dma_maxbytes, use_tlb_register_filter, use_firesim_simulation_counters, use_shared_tlb))
   (tlb.io.clients zip outer.spad.module.io.tlb).foreach(t => t._1 <> t._2)
+  //通过 zip 和 foreach，将 FrontendTLB 的 clients 接口与外部模块的 TLB 接口一一对应连接起来。这样，FrontendTLB 就可以处理来自外部模块
+  //的 TLB 请求，并返回响应
 
-  tlb.io.exp.foreach(_.flush_skip := false.B)
+  tlb.io.exp.foreach(_.flush_skip := false.B) 
   tlb.io.exp.foreach(_.flush_retry := false.B)
 
   io.ptw <> tlb.io.ptw
 
-  counters.io.event_io.collect(tlb.io.counter)
+  counters.io.event_io.collect(tlb.io.counter)//调用 collect 方法，将 FrontendTLB 的计数器事件汇总到计数器接口中
 
-  spad.module.io.flush := tlb.io.exp.map(_.flush()).reduce(_ || _)
+  spad.module.io.flush := tlb.io.exp.map(_.flush()).reduce(_ || _)//任何一个 TLB 异常接口的 flush 信号为 true，都会触发 spad.module.io.flush
 
   val clock_en_reg = RegInit(true.B)
   val gated_clock = if (clock_gate) ClockGate(clock, clock_en_reg, "gemmini_clock_gate") else clock
@@ -124,23 +126,25 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val reservation_station = withClock (gated_clock) { Module(new ReservationStation(outer.config, new GemminiCmd(reservation_station_entries))) }
   counters.io.event_io.collect(reservation_station.io.counter)
 
+  //时钟门控设置
   when (io.cmd.valid && io.cmd.bits.inst.funct === CLKGATE_EN && !io.busy) {
     clock_en_reg := io.cmd.bits.rs1(0)
   }
 
+
   val raw_cmd_q = Module(new Queue(new GemminiCmd(reservation_station_entries), entries = 2))
-  raw_cmd_q.io.enq.valid := io.cmd.valid
-  io.cmd.ready := raw_cmd_q.io.enq.ready
-  raw_cmd_q.io.enq.bits.cmd := io.cmd.bits
-  raw_cmd_q.io.enq.bits.rob_id := DontCare
-  raw_cmd_q.io.enq.bits.from_conv_fsm := false.B
-  raw_cmd_q.io.enq.bits.from_matmul_fsm := false.B
+  raw_cmd_q.io.enq.valid := io.cmd.valid//将输入命令的有效信号连接到队列的入队有效信号
+  io.cmd.ready := raw_cmd_q.io.enq.ready//将队列的入队就绪信号连接到输入命令的就绪信号
+  raw_cmd_q.io.enq.bits.cmd := io.cmd.bits//将输入命令的内容传递到队列的入队数据端口
+  raw_cmd_q.io.enq.bits.rob_id := DontCare//将 rob_id 设置为无关状态，因为在这个上下文中不重要
+  raw_cmd_q.io.enq.bits.from_conv_fsm := false.B  //表示这个命令不是来自卷积状态机
+  raw_cmd_q.io.enq.bits.from_matmul_fsm := false.B//表示这个命令不是来自矩阵乘法状态机
 
-  val raw_cmd = raw_cmd_q.io.deq
+  val raw_cmd = raw_cmd_q.io.deq//将出队接口连接到raw_cmd，这时还没有出队?
 
-  val max_lds = reservation_station_entries_ld
-  val max_exs = reservation_station_entries_ex
-  val max_sts = reservation_station_entries_st
+  val max_lds = reservation_station_entries_ld//定义加载队列中的最大条目数
+  val max_exs = reservation_station_entries_ex//定义执行队列中的最大条目数
+  val max_sts = reservation_station_entries_st//定义存储队列中的最大条目数
 
   val (conv_cmd, loop_conv_unroller_busy) = withClock (gated_clock) { LoopConv(raw_cmd, reservation_station.io.conv_ld_completed, reservation_station.io.conv_st_completed, reservation_station.io.conv_ex_completed,
     meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
@@ -188,6 +192,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val load_controller = withClock (gated_clock) { Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t)) }
   val store_controller = withClock (gated_clock) { Module(new StoreController(outer.config, coreMaxAddrBits, local_addr_t)) }
   val ex_controller = withClock (gated_clock) { Module(new ExecuteController(xLen, tagWidth, outer.config)) }
+  val add_test = withClock (gated_clock) { Module(new Add_test(outer.config, coreMaxAddrBits, local_addr_t)) } //2024.11.11修改
 
   counters.io.event_io.collect(load_controller.io.counter)
   counters.io.event_io.collect(store_controller.io.counter)
@@ -202,6 +207,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   reservation_station.io.issue.ld.ready := false.B
   reservation_station.io.issue.st.ready := false.B
   reservation_station.io.issue.ex.ready := false.B
+  reservation_station.io.issue.add_test.ready := false.B //2024.11.11修改
 
   /*
   when (is_cisc_mode) {
@@ -245,6 +251,12 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   ex_controller.io.cmd.bits := reservation_station.io.issue.ex.cmd
   ex_controller.io.cmd.bits.rob_id.push(reservation_station.io.issue.ex.rob_id)
 
+  //2024.11.11修改
+  add_test.io.cmd.valid := reservation_station.io.issue.add_test.valid
+  reservation_station.io.issue.add_test.ready := add_test.io.cmd.ready
+  add_test.io.cmd.bits := reservation_station.io.issue.add_test.cmd
+  add_test.io.cmd.bits.rob_id.push(reservation_station.io.issue.add_test.rob_id)
+
   // Wire up scratchpad to controllers
   spad.module.io.dma.read <> load_controller.io.dma
   spad.module.io.dma.write <> store_controller.io.dma
@@ -253,7 +265,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   spad.module.io.acc.read_req <> ex_controller.io.acc.read_req
   ex_controller.io.acc.read_resp <> spad.module.io.acc.read_resp
   ex_controller.io.acc.write <> spad.module.io.acc.write
-
+ 
   // Im2Col unit
   val im2col = withClock (gated_clock) { Module(new Im2Col(outer.config)) }
 
@@ -264,6 +276,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   ex_controller.io.im2col.resp <> im2col.io.resp
 
   // Wire arbiter for ExecuteController and Im2Col scratchpad reads
+  //仲裁器：负责在 ex_controller 和 im2col 的读取请求之间进行仲裁，决定哪个请求可以访问 SPAD
   (ex_controller.io.srams.read, im2col.io.sram_reads, spad.module.io.srams.read).zipped.foreach { case (ex_read, im2col_read, spad_read) =>
     val req_arb = Module(new Arbiter(new ScratchpadReadReq(n=sp_bank_entries), 2))
 
@@ -309,18 +322,19 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   //-------------------------------------------------------------------------
   // risc
-  val reservation_station_completed_arb = Module(new Arbiter(UInt(log2Up(reservation_station_entries).W), 3))
+  val reservation_station_completed_arb = Module(new Arbiter(UInt(log2Up(reservation_station_entries).W), 4)) //2024.11.11修改
+  reservation_station_completed_arb.io.in(0) <> add_test.io.completed //2024.11.11修改
+  
+  reservation_station_completed_arb.io.in(1).valid := ex_controller.io.completed.valid //2024.11.11修改
+  reservation_station_completed_arb.io.in(1).bits := ex_controller.io.completed.bits   //2024.11.11修改
 
-  reservation_station_completed_arb.io.in(0).valid := ex_controller.io.completed.valid
-  reservation_station_completed_arb.io.in(0).bits := ex_controller.io.completed.bits
-
-  reservation_station_completed_arb.io.in(1) <> load_controller.io.completed
-  reservation_station_completed_arb.io.in(2) <> store_controller.io.completed
+  reservation_station_completed_arb.io.in(2) <> load_controller.io.completed  //2024.11.11修改
+  reservation_station_completed_arb.io.in(3) <> store_controller.io.completed //2024.11.11修改
 
   // mux with cisc frontend arbiter
-  reservation_station_completed_arb.io.in(0).valid := ex_controller.io.completed.valid // && !is_cisc_mode
-  reservation_station_completed_arb.io.in(1).valid := load_controller.io.completed.valid // && !is_cisc_mode
-  reservation_station_completed_arb.io.in(2).valid := store_controller.io.completed.valid // && !is_cisc_mode
+  //reservation_station_completed_arb.io.in(0).valid := ex_controller.io.completed.valid // && !is_cisc_mode；2024.11.11注释
+  //reservation_station_completed_arb.io.in(1).valid := load_controller.io.completed.valid // && !is_cisc_mode；2024.11.11注释
+  //reservation_station_completed_arb.io.in(2).valid := store_controller.io.completed.valid // && !is_cisc_mode；2024.11.11注释
 
   reservation_station.io.completed.valid := reservation_station_completed_arb.io.out.valid
   reservation_station.io.completed.bits := reservation_station_completed_arb.io.out.bits
@@ -391,6 +405,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       unrolled_cmd.ready := true.B
     }
 
+    //如果risc_funct不匹配前面的情况，默认将该命令分配给预留站
     .otherwise {
       reservation_station.io.alloc.valid := true.B
 

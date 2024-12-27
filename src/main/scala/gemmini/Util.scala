@@ -128,13 +128,14 @@ object Util {
   // An undirectioned Valid bundle
   class UDValid[T <: Data](t: T) extends Bundle {
     val valid = Bool()
-    val bits = t.cloneType
-
+    val bits = t.cloneType//这是一个存储数据的变量，它的类型与构造函数中的 t 相同。cloneType 方法用于创建 t 的一个副本，保证 bits 具有
+                          //相同的类型和宽度。
+    //将数据b推入bits，valid置为1                      
     def push(b: T): Unit = {
       valid := true.B
       bits := b
     }
-
+    //valid置为0，该数据无效，返回该数据
     def pop(dummy: Int = 0): T = {
       valid := false.B
       bits

@@ -20,8 +20,8 @@ import hardfloat._
 object GemminiConfigs {
   val defaultConfig = GemminiArrayConfig[SInt, Float, Float](
     // Datatypes
-    inputType = SInt(8.W),
-    accType = SInt(32.W),
+    inputType = SInt(8.W),//原来是8
+    accType = SInt(32.W),//原来是32
 
     spatialArrayOutputType = SInt(20.W),
 
@@ -164,8 +164,8 @@ object GemminiConfigs {
   )
 
   val dummyConfig = GemminiArrayConfig[DummySInt, Float, Float](
-    inputType = DummySInt(8),
-    accType = DummySInt(32),
+    inputType = DummySInt(8),//原来是8
+    accType = DummySInt(32),//原来是32
     spatialArrayOutputType = DummySInt(20),
     tileRows     = defaultConfig.tileRows,
     tileColumns  = defaultConfig.tileColumns,

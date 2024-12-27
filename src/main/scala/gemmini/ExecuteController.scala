@@ -63,17 +63,18 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   val unrolled_cmd = TransposePreloadUnroller(io.cmd, config, io.counter)
 
-  val cmd_q_heads = 3
-  assert(ex_queue_length >= cmd_q_heads)
+  val cmd_q_heads = 3//表示指令队列的头部数量,被设置为 3，表示队列的头部可以同时处理 3 条指令
+  assert(ex_queue_length >= cmd_q_heads) 
   // val (cmd, _) = MultiHeadedQueue(io.cmd, ex_queue_length, cmd_q_heads)
   val (cmd, _) = MultiHeadedQueue(unrolled_cmd, ex_queue_length, cmd_q_heads)
-  cmd.pop := 0.U
+  cmd.pop := 0.U//初始化 cmd.pop，表示当前不弹出任何指令
 
   // STATE defines
   val waiting_for_cmd :: compute :: flush :: flushing :: Nil = Enum(4)
   val control_state = RegInit(waiting_for_cmd)
 
   // Instruction-related variables
+  //如果 dataflow 是 BOTH，则 current_dataflow 是一个可变寄存器；否则，它是一个固定值
   val current_dataflow = if (dataflow == Dataflow.BOTH) Reg(UInt(1.W)) else dataflow.id.U
 
   val functs = cmd.bits.map(_.cmd.inst.funct)
@@ -84,6 +85,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val DoComputes = functs.map(f => f === COMPUTE_AND_FLIP_CMD || f === COMPUTE_AND_STAY_CMD)
   val DoPreloads = functs.map(_ === PRELOAD_CMD)
 
+  //确定预加载指令的位置。如果第一个指令是预加载指令（DoPreloads(0) 为 true），则 preload_cmd_place 为 0.U；否则为 1.U
   val preload_cmd_place = Mux(DoPreloads(0), 0.U, 1.U)
   // val a_address_place = Mux(current_dataflow === Dataflow.WS.id.U, 0.U, Mux(preload_cmd_place === 0.U, 1.U, 2.U))
 
@@ -94,31 +96,31 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     in_prop_flush := false.B
   }
 
-  val ocol = RegInit(0.U(8.W))
-  val orow = RegInit(0.U(8.W))
-  val krow = RegInit(0.U(4.W))
-  val weight_stride = RegInit(0.U(3.W))
-  val channel = RegInit(0.U(9.W))
+  val ocol = RegInit(0.U(8.W))//表示当前的输出列,用于确定卷积操作的输出位置
+  val orow = RegInit(0.U(8.W))//表示当前的输出行,用于确定卷积操作的输出位置
+  val krow = RegInit(0.U(4.W))//表示卷积核的当前行索引（kernel row）,卷积操作会遍历卷积核的每一行
+  val weight_stride = RegInit(0.U(3.W))//卷积操作的步幅（stride）
+  val channel = RegInit(0.U(9.W))//卷积操作中的通道数（channels）
   val row_turn = RegInit(0.U(11.W))
   val row_left = RegInit(0.U(4.W))
-  val kdim2 = RegInit(0.U(8.W))
-  val weight_double_bank = RegInit(false.B)
-  val weight_triple_bank = RegInit(false.B)
+  val kdim2 = RegInit(0.U(8.W))//卷积核的尺寸（kernel dimension）
+  val weight_double_bank = RegInit(false.B)//指示是否使用双倍的权重存储器
+  val weight_triple_bank = RegInit(false.B)//指示是否使用三倍的权重存储器
 
-  val icol = WireInit(0.U(9.W))
-  val irow = WireInit(0.U(9.W))
+  val icol = WireInit(0.U(9.W))//当前输入的列索引
+  val irow = WireInit(0.U(9.W))//当前输入的行索引
 
   icol := ((ocol - 1.U) * weight_stride + krow)//.asSInt
   irow := ((orow - 1.U) * weight_stride + krow)//.asSInt
 
   val im2col_turn = WireInit(0.U(9.W))
 
-  val in_shift = Reg(UInt(log2Up(accType.getWidth).W))
-  val acc_scale = Reg(acc_scale_t)
-  val activation = if (has_nonlinear_activations) Reg(UInt(Activation.bitwidth.W)) else Activation.NONE // TODO magic number
+  val in_shift = Reg(UInt(log2Up(accType.getWidth).W))//输入数据的位移量（shift）
+  val acc_scale = Reg(acc_scale_t)//累加器的缩放因子（scale）
+  val activation = if (has_nonlinear_activations) Reg(UInt(Activation.bitwidth.W)) else Activation.NONE // TODO magic number;激活函数的类型
   val a_transpose = Reg(Bool())
   val bd_transpose = Reg(Bool())
-  val config_initialized = RegInit(false.B)
+  val config_initialized = RegInit(false.B)//指示配置是否已经初始化
 
   val a_should_be_fed_into_transposer = Mux(current_dataflow === Dataflow.OS.id.U, !a_transpose, a_transpose)
   val a_address_place = Mux(preload_cmd_place === 0.U, 1.U, Mux(a_should_be_fed_into_transposer, 2.U, 0.U))
@@ -128,12 +130,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   val d_should_be_fed_into_transposer = current_dataflow === Dataflow.WS.id.U && bd_transpose
 
+  //确保在同一时间，只有一个矩阵（A、B 或 D）被送入转置单元
   assert(!(config_initialized &&
     (a_should_be_fed_into_transposer +& b_should_be_fed_into_transposer +& d_should_be_fed_into_transposer) > 1.U),
     "Too many inputs are being fed into the single transposer we have")
 
   //fix by input
-  val im2col_en = config.hasIm2Col.B && weight_stride =/= 0.U
+  val im2col_en = config.hasIm2Col.B && weight_stride =/= 0.U//是否启用 Im2Col 操作:如果步幅为 0，意味着不需要进行卷积操作，因此不需要启用 Im2Col
 
   // SRAM addresses of matmul operands
   val a_address_rs1 = rs1s(a_address_place).asTypeOf(local_addr_t)
@@ -147,16 +150,16 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     b_address_rs2.make_this_garbage()
   }
 
-  val multiply_garbage = a_address_rs1.is_garbage()
-  val accumulate_zeros = b_address_rs2.is_garbage()
-  val preload_zeros = d_address_rs1.is_garbage()
+  val multiply_garbage = a_address_rs1.is_garbage()//表示矩阵 A 的地址是否是垃圾地址，是否需要参加矩阵乘法操作
+  val accumulate_zeros = b_address_rs2.is_garbage()//表示矩阵 B 的地址是否是垃圾地址，是否需要参与累加操作
+  val preload_zeros = d_address_rs1.is_garbage()   //表示矩阵 D 的地址是否是垃圾地址，是否需要参与预加载操作?
 
-  val a_cols_default = rs1s(a_address_place)(32 + log2Up(block_size + 1) - 1, 32) // TODO magic numbers
-  val a_rows_default = rs1s(a_address_place)(48 + log2Up(block_size + 1) - 1, 48) // TODO magic numbers
-  val b_cols_default = rs2s(b_address_place)(32 + log2Up(block_size + 1) - 1, 32) // TODO magic numbers
-  val b_rows_default = rs2s(b_address_place)(48 + log2Up(block_size + 1) - 1, 48) // TODO magic numbers
-  val d_cols_default = rs1s(preload_cmd_place)(32 + log2Up(block_size + 1) - 1, 32) // TODO magic numbers
-  val d_rows_default = rs1s(preload_cmd_place)(48 + log2Up(block_size + 1) - 1, 48) // TODO magic numbers
+  val a_cols_default = rs1s(a_address_place)(32 + log2Up(block_size + 1) - 1, 32) // TODO magic numbers;表示矩阵 A 的默认列数
+  val a_rows_default = rs1s(a_address_place)(48 + log2Up(block_size + 1) - 1, 48) // TODO magic numbers;表示矩阵 A 的默认行数
+  val b_cols_default = rs2s(b_address_place)(32 + log2Up(block_size + 1) - 1, 32) // TODO magic numbers;表示矩阵 B 的默认列数
+  val b_rows_default = rs2s(b_address_place)(48 + log2Up(block_size + 1) - 1, 48) // TODO magic numbers;表示矩阵 B 的默认行数
+  val d_cols_default = rs1s(preload_cmd_place)(32 + log2Up(block_size + 1) - 1, 32) // TODO magic numbers;表示矩阵 D 的默认列数
+  val d_rows_default = rs1s(preload_cmd_place)(48 + log2Up(block_size + 1) - 1, 48) // TODO magic numbers;表示矩阵 D 的默认行数
 
   val a_cols = Mux(a_transpose, a_rows_default, a_cols_default)
   val a_rows = Mux(a_transpose, a_cols_default, a_rows_default)
@@ -164,19 +167,19 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val b_rows = Mux(current_dataflow === Dataflow.OS.id.U && bd_transpose, b_cols_default, b_rows_default)
   val d_cols = Mux(current_dataflow === Dataflow.WS.id.U && bd_transpose, d_rows_default, d_cols_default)
   val d_rows = Mux(current_dataflow === Dataflow.WS.id.U && bd_transpose, d_cols_default, d_rows_default)
-  val c_cols = rs2s(preload_cmd_place)(32 + log2Up(block_size + 1) - 1, 32) // TODO magic numbers
-  val c_rows = rs2s(preload_cmd_place)(48 + log2Up(block_size + 1) - 1, 48) // TODO magic numbers
+  val c_cols = rs2s(preload_cmd_place)(32 + log2Up(block_size + 1) - 1, 32) // TODO magic numbers;表示矩阵 C 的列数
+  val c_rows = rs2s(preload_cmd_place)(48 + log2Up(block_size + 1) - 1, 48) // TODO magic numbers;表示矩阵 C 的行数
 
   // Dependency stuff
-  io.completed.valid := false.B
+  io.completed.valid := false.B//表示当前指令是否已经执行完成
   io.completed.bits := DontCare
 
   // val pending_completed_rob_id = Reg(UDValid(UInt(log2Up(rob_entries).W)))
-  val pending_completed_rob_ids = Reg(Vec(2, UDValid(UInt(log2Up(reservation_station_entries).W))))
+  val pending_completed_rob_ids = Reg(Vec(2, UDValid(UInt(log2Up(reservation_station_entries).W))))//存储两个即将完成的指令的 ROB ID
 
   // Instantiate a queue which queues up signals which must be fed into the mesh
   val mesh_cntl_signals_q = Module(new Queue(new ComputeCntlSignals, spad_read_delay+1,
-    pipe=true))
+    pipe=true))//当 pipe = true 时，队列的输入和输出可以在同一个时钟周期内同时进行（即可以在同一周期内入队和出队）
 
   val cntl_ready = mesh_cntl_signals_q.io.enq.ready
   val cntl_valid = mesh_cntl_signals_q.io.deq.valid
@@ -207,16 +210,21 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   mesh.io.req.bits.flush := Mux(control_state === flush && !cntl_valid, 1.U, 0.U) // We want to make sure that the mesh has absorbed all inputs before flushing
 
   // Hazards
+  //如果当前指令既不从累加器读取数据，也不向片上存储器写入数据，那么 RAW 冒险是不可能发生的，因为没有数据依赖关系
   val raw_hazards_are_impossible = !ex_read_from_acc && !ex_write_to_spad // Special case where RAW hazards are impossible
 
   val raw_hazard_pre = mesh.io.tags_in_progress.map { t =>
+    //检查标签中的地址是否是垃圾地址（即无效地址）。如果地址是垃圾地址，则不需要考虑该标签
     val is_garbage = t.addr.is_garbage()
+    //检查标签中的地址是否与 rs1s(0) 相同，rs1s(0) 是当前指令的第一个源操作数地址。如果相同，表示存在潜在的读后写冒险
     val pre_raw_haz = t.addr.is_same_address(rs1s(0))
+    //检查标签中的地址是否与 rs1s(1) 或 rs2s(1) 相同，rs1s(1) 和 rs2s(1) 是当前指令的第二个源操作数地址。如果相同，表示存在潜在的读后写冒险。
     val mul_raw_haz = t.addr.is_same_address(rs1s(1)) || t.addr.is_same_address(rs2s(1))
 
     !is_garbage && (pre_raw_haz || mul_raw_haz) && !raw_hazards_are_impossible.B
   }.reduce(_ || _)
 
+  //如果标签中的地址不是垃圾地址，并且与 rs1s(1)、rs1s(2) 或 rs2s(2) 相同，并且 raw_hazards_are_impossible 为 false，则表示存在读后写冒险。
   val raw_hazard_mulpre = mesh.io.tags_in_progress.map { t =>
     val is_garbage = t.addr.is_garbage()
     val pre_raw_haz = t.addr.is_same_address(rs1s(1))
@@ -225,9 +233,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     !is_garbage && (mul_raw_haz || pre_raw_haz) && !raw_hazards_are_impossible.B
   }.reduce(_ || _)
 
+  //如果矩阵 A、B 或预加载命令的地址位置大于 1，或者存在数据冒险，则 third_instruction_needed 为 true，表示需要第三条指令?
   val third_instruction_needed = a_address_place > 1.U || b_address_place > 1.U || preload_cmd_place > 1.U || !raw_hazards_are_impossible.B
 
-  val matmul_in_progress = mesh.io.tags_in_progress.map(_.rob_id.valid).reduce(_ || _)
+  val matmul_in_progress = mesh.io.tags_in_progress.map(_.rob_id.valid).reduce(_ || _)//是否有矩阵乘法操作正在进行
 
   io.busy := cmd.valid(0) || matmul_in_progress
 
@@ -341,11 +350,15 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val Seq(a_valid, b_valid, d_valid) = operands.map { case Operand(addr, is_garbage, start_inputting, counter, started, can_be_im2colled, priority) =>
     val others = operands.filter(_.priority != priority)
 
+    //当前操作数与其他操作数是否位于相同的存储器银行
     val same_banks = others.map(o => same_bank(addr, o.addr, is_garbage, o.is_garbage, start_inputting, o.start_inputting, can_be_im2colled || o.can_be_im2colled))
+    //当前操作数与其他操作数的计数器是否相同
     val same_counter = others.map(o => started === o.started && counter === o.counter)
 
+    //当前操作数的计数器是否比其他操作数领先一步
     val one_ahead = others.map(o => started && counter === wrappingAdd(o.counter, 1.U, total_rows))
 
+    //其他操作数的优先级是否高于当前操作数
     val higher_priorities = others.map(o => (o.priority < priority).B)
 
     val must_wait_for = ((same_banks zip same_counter) zip (one_ahead zip higher_priorities)).map {
@@ -356,16 +369,18 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     !must_wait_for.reduce(_ || _)
   }
 
+  //矩阵 A、B 和 D 是否可以在当前时钟周期中触发（即是否可以开始处理）
   val a_fire = a_valid && a_ready
   val b_fire = b_valid && b_ready
   val d_fire = d_valid && d_ready
 
+  //表示是否有矩阵正在输入
   val firing = start_inputting_a || start_inputting_b || start_inputting_d
 
   when (!firing) {
     a_fire_counter := 0.U
     a_addr_offset := 0.U
-  }.elsewhen (firing && a_fire && cntl_ready) {
+  }.elsewhen (firing && a_fire && cntl_ready) {//如果有矩阵正在输入，并且矩阵 A 触发且控制信号 cntl_ready 为 true，则递增 a_fire_counter，并更新 a_addr_offset
     a_fire_counter := wrappingAdd(a_fire_counter, 1.U, total_rows)
     a_addr_offset := Mux(a_fire_counter === (total_rows-1.U), 0.U, a_addr_offset + a_addr_stride)
     a_fire_started := true.B
@@ -402,6 +417,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   // The last line in this (long) Boolean is just to make sure that we don't think we're done as soon as we begin firing
   // TODO change when square requirement lifted
+  //当矩阵 A、B 和 D 的触发计数器都已经达到最后一行，或者还没有开始处理，并且控制器准备好时，about_to_fire_all_rows 被设置为 true，表示即将处理完所有行。
   val about_to_fire_all_rows = ((a_fire_counter === (total_rows-1.U) && a_fire) || a_fire_counter === 0.U) &&
     ((b_fire_counter === (total_rows-1.U) && b_fire) || b_fire_counter === 0.U) &&
     ((d_fire_counter === (total_rows-1.U) && d_fire) || d_fire_counter === 0.U) &&
@@ -421,10 +437,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   // Scratchpad reads
   for (i <- 0 until sp_banks) {
+    //是否需要从存储器读取矩阵 A、B 和 D 的数据
     val read_a = a_valid && !a_read_from_acc && dataAbank === i.U && start_inputting_a && !multiply_garbage && a_row_is_not_all_zeros && !(im2col_wire&&im2col_en)
     val read_b = b_valid && !b_read_from_acc && dataBbank === i.U && start_inputting_b && !accumulate_zeros && b_row_is_not_all_zeros //&& !im2col_wire
     val read_d = d_valid && !d_read_from_acc && dataDbank === i.U && start_inputting_d && !preload_zeros && d_row_is_not_all_zeros //&& !im2col_wire
 
+    //检查存储器是否准备好
     Seq((read_a, a_ready), (read_b, b_ready), (read_d, d_ready)).foreach { case (rd, r) =>
       when (rd && !io.srams.read(i).req.ready) {
         r := false.B
@@ -503,7 +521,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   // Im2Col reads
   {
-    val read_a = a_valid && start_inputting_a && !multiply_garbage && im2col_wire&&im2col_en //or just im2col_wire
+    val read_a = a_valid && start_inputting_a && !multiply_garbage && im2col_wire && im2col_en //or just im2col_wire
 
     when (read_a && !io.im2col.req.ready) {
       a_ready := false.B
@@ -696,37 +714,44 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val computing = performing_mul_pre || performing_single_mul || performing_single_preload
 
   class ComputeCntlSignals extends Bundle {
-    val perform_mul_pre = Bool()
-    val perform_single_mul = Bool()
-    val perform_single_preload = Bool()
+    val perform_mul_pre = Bool()       //是否执行矩阵乘法和预加载重叠操作
+    val perform_single_mul = Bool()    //表示是否执行单次矩阵乘法
+    val perform_single_preload = Bool()//表示是否执行单次预加载操作
 
+    //表示矩阵 A、B 和 D 的数据存储在哪个片上存储器（Scratchpad）银行中
     val a_bank = UInt(log2Up(sp_banks).W)
     val b_bank = UInt(log2Up(sp_banks).W)
     val d_bank = UInt(log2Up(sp_banks).W)
 
+    //表示矩阵 A、B 和 D 的数据存储在哪个累加器（Accumulator）银行中
     val a_bank_acc = UInt(log2Up(acc_banks).W)
     val b_bank_acc = UInt(log2Up(acc_banks).W)
     val d_bank_acc = UInt(log2Up(acc_banks).W)
 
+    //表示矩阵 A、B 和 D 是否从 累加器 中读取数据
     val a_read_from_acc = Bool()
     val b_read_from_acc = Bool()
     val d_read_from_acc = Bool()
 
+    //表示矩阵 A、B 和 D 的数据是否是 垃圾数据
     val a_garbage = Bool()
     val b_garbage = Bool()
     val d_garbage = Bool()
 
-    val accumulate_zeros = Bool()
-    val preload_zeros = Bool()
+    val accumulate_zeros = Bool()//表示矩阵 B 是否需要 累加零。如果为 true，表示矩阵 B 的数据是零，不需要参与累加操作
+    val preload_zeros = Bool()   //表示矩阵 D 是否需要 预加载零。如果为 true，表示矩阵 D 的数据是零，不需要参与预加载操作
 
+    //表示矩阵 A、B 和 D 是否触发了计算
     val a_fire = Bool()
     val b_fire = Bool()
     val d_fire = Bool()
 
+    //表示矩阵 A、B 和 D 的 未填充列数
     val a_unpadded_cols = UInt(log2Up(block_size + 1).W)
     val b_unpadded_cols = UInt(log2Up(block_size + 1).W)
     val d_unpadded_cols = UInt(log2Up(block_size + 1).W)
 
+    //矩阵 C 的地址和维度
     val c_addr = local_addr_t.cloneType
     val c_rows = UInt(log2Up(block_size + 1).W)
     val c_cols = UInt(log2Up(block_size + 1).W)
@@ -739,12 +764,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val rob_id = UDValid(UInt(log2Up(reservation_station_entries).W))
 
     val dataflow = UInt(1.W)
-    val prop = UInt(1.W)
-    val shift = UInt(log2Up(accType.getWidth).W)
+    val prop = UInt(1.W)//表示是否需要数据传播，用于控制计算单元的数据流动
+    val shift = UInt(log2Up(accType.getWidth).W)//表示数据的 位移量，用于缩放或对齐数据
 
     val im2colling = Bool()
 
-    val first = Bool()
+    val first = Bool()//表示当前是否是 第一个操作
   }
 
   mesh_cntl_signals_q.io.enq.valid := computing
@@ -837,6 +862,19 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val dataB = VecInit(dataB_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, inputType.zero)})
   val dataD = VecInit(dataD_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.d_unpadded_cols, d, inputType.zero)})
 
+  /* val checkbitgenerator = Module(new CheckBitGenerator(inputType))
+  val damn = RegInit(VecInit(Seq.fill(16)(0.U.asTypeOf(inputType))))
+  val damn_1 = RegInit(VecInit(Seq.fill(16)(0.U.asTypeOf(inputType))))
+  val damn_2 = RegInit(0.U.asTypeOf(inputType))
+  for (i <- 0 until 16) {
+        damn(i) := checkbitgenerator.io.a_out.bits(i)
+        damn_1(i) := checkbitgenerator.io.col_addresult.bits(i)
+      }
+  damn_2 := checkbitgenerator.io.row_addresult.bits
+  dontTouch(damn)
+  dontTouch(damn_1)
+  dontTouch(damn_2) */ 
+
   // Pop responses off the scratchpad io ports
   when (mesh_cntl_signals_q.io.deq.fire) {
     when (cntl.a_fire && mesh.io.a.fire && !cntl.a_garbage && cntl.a_unpadded_cols > 0.U && !cntl.im2colling) {
@@ -868,9 +906,18 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     for (acc_r <- io.acc.read_resp) {
       acc_r.ready := true.B
     }
-  }
-
+  } 
+    /* checkbitgenerator.io.a.bits := DontCare
+    checkbitgenerator.io.a.valid := DontCare
+    checkbitgenerator.io.a_out.ready := DontCare
+    checkbitgenerator.io.col_addresult.ready := DontCare
+    checkbitgenerator.io.row_addresult.ready := DontCare */
   when (cntl_valid) {
+    /* checkbitgenerator.io.a.valid := cntl.a_fire && dataA_valid
+    checkbitgenerator.io.a.bits := dataA
+    checkbitgenerator.io.a_out.ready := true.B
+    checkbitgenerator.io.col_addresult.ready := true.B
+    checkbitgenerator.io.row_addresult.ready := true.B */
     // Default inputs
     mesh.io.a.valid := cntl.a_fire && dataA_valid
     mesh.io.b.valid := cntl.b_fire && dataB_valid
@@ -942,7 +989,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.srams.write(i).mask := DontCare
     }
   }
-
+ 
   // Write to accumulator
   for (i <- 0 until acc_banks) {
     if (ex_write_to_acc) {

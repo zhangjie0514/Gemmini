@@ -1,0 +1,102 @@
+Input dimensions (rows by columns): 17 by 17
+Output dimensions (rows by columns): 9 by 9
+
+Randomize inputs...
+Randomize weights...
+Randomize bias...
+Flatten weights...
+Gemmini conv...
+batches = 2
+orows   = 9
+ocols   = 9
+ochs    = 3
+krows   = 3
+kcols   = 3
+kchs    = 2
+
+batch_size: 2, pool_out_row_dim: 9, pool_out_col_dim: 9, out_channels: 3, kernel_dim: 3, kernel_dim: 3, in_channels: 2
+b: 0, porow: 0, pocol: 0, poch: 0, krow: 0, kcol: 0, kch: 0
+lpad = 1
+rpad   = 2
+upad   = 1
+dpad    = 2
+b = 0
+irow   = -1
+icol   = -1
+ich    = 0
+col = 2
+row   = 1
+b = 0
+irow   = -1
+icol   = 0
+ich    = 0
+col = 2
+row   = 16
+b = 0
+irow   = -1
+icol   = 16
+ich    = 0
+col = 2
+row   = 1
+b = 0
+irow   = -1
+icol   = 17
+ich    = 0
+col = 2
+row   = 2
+b = 0
+irow   = 0
+icol   = -1
+ich    = 0
+col = 2
+row   = 1
+b = 0
+irow   = 0
+icol   = 0
+ich    = 0
+col = 2
+row   = 16
+b = 0
+irow   = 0
+icol   = 16
+ich    = 0
+col = 2
+row   = 1
+b = 0
+irow   = 0
+icol   = 17
+ich    = 0
+col = 2
+row   = 2
+b = 0
+irow   = 1
+icol   = -1
+ich    = 0
+col = 2
+row   = 1
+b = 0
+irow   = 1
+icol   = 0
+ich    = 0
+col = 2
+row   = 16
+b = 0
+irow   = 1
+icol   = 16
+ich    = 0
+col = 2
+row   = 1
+b = 0
+irow   = 1
+icol   = 17
+ich    = 0
+col = 2
+row   = 2
+b = 0
+irow   = 2
+icol   = -1
+ich    = 0
+col = 2
+row   = 1
+[UART] UART0 is here (stdin/stdout).
+- /home/zhangjie/chipyard/sims/verilator/generated-src/chipyard.harness.TestHarness.CustomGemminiSoCConfig/gen-collateral/TestDriver.v:158: Verilog $finish

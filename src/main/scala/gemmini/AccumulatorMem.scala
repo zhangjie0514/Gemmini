@@ -134,7 +134,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   val mask_len = t.getWidth / 8
   val mask_elem = UInt((t.getWidth / mask_len).W)
 
-  if (!acc_singleported && !is_dummy) {
+  if (!acc_singleported && !is_dummy) { 
     require(!use_shared_ext_mem)
     val mem = TwoPortSyncMem(n, t, mask_len) // TODO We assume byte-alignment here. Use aligned_to instead
     mem.io.waddr := oldest_pipelined_write.bits.addr

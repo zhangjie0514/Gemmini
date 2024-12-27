@@ -27,23 +27,23 @@ class LoopConvOuterBounds(val large_iterator_bitwidth: Int, val small_iterator_b
 }
 
 class LoopConvInnerBounds(val large_iterator_bitwidth: Int, val small_iterator_bitwidth: Int, val tiny_iterator_bitwidth: Int) extends Bundle {
-  val batches = UInt(large_iterator_bitwidth.W)
-  val porows = UInt(small_iterator_bitwidth.W)
-  val pocols = UInt(small_iterator_bitwidth.W)
-  val pochs = UInt(large_iterator_bitwidth.W)
-  val krows = UInt(tiny_iterator_bitwidth.W)
-  val kcols = UInt(tiny_iterator_bitwidth.W)
-  val kchs = UInt(large_iterator_bitwidth.W)
-  val lpad = UInt(tiny_iterator_bitwidth.W)
-  val rpad = UInt(tiny_iterator_bitwidth.W)
-  val upad = UInt(tiny_iterator_bitwidth.W)
-  val dpad = UInt(tiny_iterator_bitwidth.W)
-  val plpad = UInt(tiny_iterator_bitwidth.W)
-  val prad = UInt(tiny_iterator_bitwidth.W)
-  val pupad = UInt(tiny_iterator_bitwidth.W)
-  val pdpad = UInt(tiny_iterator_bitwidth.W)
-  val orows = UInt(small_iterator_bitwidth.W)
-  val ocols = UInt(small_iterator_bitwidth.W)
+  val batches = UInt(large_iterator_bitwidth.W) //批处理的数量
+  val porows = UInt(small_iterator_bitwidth.W)  //池化输出的行数
+  val pocols = UInt(small_iterator_bitwidth.W)  //池化输出的列数
+  val pochs = UInt(large_iterator_bitwidth.W)   //池化输出的通道数
+  val krows = UInt(tiny_iterator_bitwidth.W)    //卷积核的行数
+  val kcols = UInt(tiny_iterator_bitwidth.W)    //卷积核的列数
+  val kchs = UInt(large_iterator_bitwidth.W)    //卷积核的通道数
+  val lpad = UInt(tiny_iterator_bitwidth.W)     //图像左侧填充数量
+  val rpad = UInt(tiny_iterator_bitwidth.W)     //图像右侧填充数量
+  val upad = UInt(tiny_iterator_bitwidth.W)     //图像上侧填充数量
+  val dpad = UInt(tiny_iterator_bitwidth.W)     //图像下侧填充数量
+  val plpad = UInt(tiny_iterator_bitwidth.W)    //池化图像左侧填充数量
+  val prad = UInt(tiny_iterator_bitwidth.W)     //池化图像右侧填充数量
+  val pupad = UInt(tiny_iterator_bitwidth.W)    //池化图像上侧填充数量
+  val pdpad = UInt(tiny_iterator_bitwidth.W)    //池化图像下侧填充数量
+  val orows = UInt(small_iterator_bitwidth.W)   //输出行数
+  val ocols = UInt(small_iterator_bitwidth.W)   //输出列数
 }
 
 class LoopConvDerivedParams(val large_iterator_bitwidth: Int, val small_iterator_bitwidth: Int, val tiny_iterator_bitwidth: Int) extends Bundle {
@@ -100,27 +100,28 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
   import req.inner_bounds._
   import req.derived_params._
 
-  val acc_addr_start = req.addr_start
+  val acc_addr_start = req.addr_start //累加器地址的起始位置
 
   // Derived parameters
-  val max_ochs_per_mvin = Mux(ochs < (max_block_len_acc * block_size).U, ochs, (max_block_len_acc * block_size).U)
+  val max_ochs_per_mvin = Mux(ochs < (max_block_len_acc * block_size).U, ochs, (max_block_len_acc * block_size).U) //每次数据移动指令能够处理的最大输出通道数，根据硬件限制计算
 
-  val skip = req.dram_addr === 0.U
+  val skip = req.dram_addr === 0.U //指示是否跳过当前请求（若 DRAM 地址为 0，则跳过）
 
   // Iterators
+  //寄存器，分别表示当前批次、输出行、输出列和输出通道的迭代器
   val b = Reg(UInt(large_iterator_bitwidth.W))
   val orow = Reg(UInt(small_iterator_bitwidth.W))
   val ocol = Reg(UInt(small_iterator_bitwidth.W))
   val och = Reg(UInt(large_iterator_bitwidth.W))
 
   // Addresses
-  val dram_offset = och * (acc_w/8).U
-  val dram_addr = Mux(req.no_bias, 0.U, req.dram_addr + LoopConv.castDramOffset(dram_offset))
-  val spad_addr = acc_addr_start +& (och / block_size.U(och.getWidth.W)) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
+  val dram_offset = och * (acc_w/8).U //DRAM 地址偏移量，基于当前输出通道计算
+  val dram_addr = Mux(req.no_bias, 0.U, req.dram_addr + LoopConv.castDramOffset(dram_offset)) //计算偏置数据在 DRAM 中的实际地址
+  val spad_addr = acc_addr_start +& (och / block_size.U(och.getWidth.W)) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol //计算偏置数据在加速器局部存储器中的地址
 
   // Sizes
-  val I = Mux(ocols - ocol > block_size.U, block_size.U, ocols - ocol)
-  val J = Mux(ochs - och > max_ochs_per_mvin, max_ochs_per_mvin, ochs - och)
+  val I = Mux(ocols - ocol > block_size.U, block_size.U, ocols - ocol)       //当前列块的大小，取决于输出列数和块大小
+  val J = Mux(ochs - och > max_ochs_per_mvin, max_ochs_per_mvin, ochs - och) //当前通道块的大小，取决于输出通道数和每次数据移动指令的最大容量
 
   class RoCCCommandWithAddr extends Bundle {
     val cmd = new RoCCCommand
@@ -132,6 +133,7 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
   val command_p = Module(new Pipeline[RoCCCommandWithAddr](new RoCCCommandWithAddr, latency)())
 
   // Commands
+  //生成了两个命令：一个配置命令、一个load命令
   val config_cmd = Wire(new RoCCCommand)
   config_cmd := DontCare
   config_cmd.inst.funct := CONFIG_CMD
@@ -166,8 +168,8 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
   command_p.io.in.bits.I := I
   command_p.io.in.bits.J := J
 
-  command_p.io.out.ready := io.cmd.ready && !io.rob_overloaded
-  io.cmd.valid := command_p.io.out.valid && !io.rob_overloaded
+  command_p.io.out.ready := io.cmd.ready && !io.rob_overloaded //确保只有当外部接口准备好接收命令时，流水线才会准备好输出数据 && 如果重排序缓冲区（ROB）没有过载时，才可以继续处理命令
+  io.cmd.valid := command_p.io.out.valid && !io.rob_overloaded //流水线输出有效 && 重排序缓冲区（ROB）没有过载时，输出命令有效
   io.cmd.bits := command_p.io.out.bits.cmd
   when (command_p.io.out.bits.cmd.inst.funct === LOAD3_CMD) {
     val o = command_p.io.out.bits
@@ -187,10 +189,10 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
     when (state === config) {
       state := ld
     }.otherwise {
-      val next_och = floorAdd(och, max_ochs_per_mvin, ochs)
-      val next_ocol = floorAdd(ocol, block_size.U, ocols, next_och === 0.U)
-      val next_orow = floorAdd(orow, 1.U, orows, next_ocol === 0.U && next_och === 0.U)
-      val next_b = floorAdd(b, 1.U, batches, next_orow === 0.U && next_ocol === 0.U && next_och === 0.U)
+      val next_och = floorAdd(och, max_ochs_per_mvin, ochs) //更新当前输出通道的迭代器，步长为 max_ochs_per_mvin
+      val next_ocol = floorAdd(ocol, block_size.U, ocols, next_och === 0.U) //更新当前输出列的迭代器，步长为 block_size.U，当 next_och 重置为 0 时，继续更新
+      val next_orow = floorAdd(orow, 1.U, orows, next_ocol === 0.U && next_och === 0.U) //更新当前输出行的迭代器，步长为 1，当 next_ocol 和 next_och 都重置为 0 时，继续更新
+      val next_b = floorAdd(b, 1.U, batches, next_orow === 0.U && next_ocol === 0.U && next_och === 0.U) //更新批次迭代器，步长为 1，当 next_orow、next_ocol 和 next_och 都重置为 0 时，继续更新
 
       och := next_och
       ocol := next_ocol
@@ -198,7 +200,7 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
       b := next_b
 
       state := Mux(next_b === 0.U && next_orow === 0.U && next_ocol === 0.U && next_och === 0.U,
-        idle, ld)
+        idle, ld) //如果所有这些迭代器都重置为 0，说明一个完整的循环已经完成，状态机会切换回 idle 状态；否则，保持在 ld 状态以继续加载数据
     }
   }
 
@@ -617,11 +619,11 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
 
   // Derived parameters
   val B_rows = Mux(req.trans_weight_0132, in_channels_per_bank * kcols * krows * ochs,
-    out_channels_per_bank * kcols * krows * kchs)
+    out_channels_per_bank * kcols * krows * kchs) // 计算权重矩阵的行数，根据是否转置权重来决定
 
-  val a_addr_start = req.a_addr_start
-  val b_addr_start = req.b_addr_end - B_rows
-  val c_addr_start = /*(BigInt(3) << 30).U |*/ req.c_addr_start
+  val a_addr_start = req.a_addr_start //输入的起始地址
+  val b_addr_start = req.b_addr_end - B_rows //权重的起始地址
+  val c_addr_start = /*(BigInt(3) << 30).U |*/ req.c_addr_start //输出的起始地址
 
   // Iterators
   val och = Reg(UInt(large_iterator_bitwidth.W))
@@ -634,12 +636,12 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
 
   // TODO kernel-dilation and input-dilation can never be activated at the same time, so we can optimize out some multiplications by kernel_dilation
   val skip_iteration = state >= pre && req.input_dilated && (((krow * kernel_dilation +& orow -& upad)(0) & req.input_dilated).asBool ||
-    ((kcol * kernel_dilation +& ocol -& lpad)(0) & req.input_dilated).asBool)
+    ((kcol * kernel_dilation +& ocol -& lpad)(0) & req.input_dilated).asBool) // 如果满足输入扩张条件，则跳过当前迭代
 
-  val pixels = Mux(kcols - kcol > req.max_pixels_per_row, req.max_pixels_per_row, kcols - kcol)
+  val pixels = Mux(kcols - kcol > req.max_pixels_per_row, req.max_pixels_per_row, kcols - kcol) //计算当前卷积核处理的像素数
 
-  val irow = undilated(orow * stride +& krow * kernel_dilation)
-  val icol = undilated(ocol * stride +& kcol * kernel_dilation)
+  val irow = undilated(orow * stride +& krow * kernel_dilation) //计算当前输入行的索引
+  val icol = undilated(ocol * stride +& kcol * kernel_dilation) //计算当前输入列的索引
 
   val I = Mux(req.trans_input_3120,
     Mux(batches - b > block_size.U, block_size.U, batches - b),
@@ -710,7 +712,7 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   comp_cmd.rs1 := 0.U//(I << 48) | (K << 32) | a_addr
   comp_cmd.rs2 := 0.U//(I << 48) | (J << 32) | GARBAGE_ADDR
 
-  val ld_ahead = io.lda_completed && io.ldb_completed && io.ldd_completed
+  val ld_ahead = io.lda_completed && io.ldb_completed && io.ldd_completed //检查所有的加载操作是否完成
 
   // Inputs and outputs
   io.req.ready := state === idle && !command_p.io.busy
@@ -1179,14 +1181,14 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   })
 
   // Create states
-  val concurrent_loops = 2
+  val concurrent_loops = 2 //同时支持的最大并发循环数量
   val loops = Reg(Vec(concurrent_loops, new LoopConvState(block_size, large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth, coreMaxAddrBits, max_addr, max_acc_addr)))
-  val head_loop_id = RegInit(0.U(log2Up(concurrent_loops).W))
-  val tail_loop_id = (~head_loop_id).asUInt // This is the loop that we always try to configure if available
+  val head_loop_id = RegInit(0.U(log2Up(concurrent_loops).W)) //管理当前配置的循环
+  val tail_loop_id = (~head_loop_id).asUInt // 管理即将配置的循环；This is the loop that we always try to configure if available
   val head_loop = loops(head_loop_id)
   val tail_loop = loops(tail_loop_id)
 
-  val loop_configured = loops.map(_.configured).reduce(_ || _)
+  val loop_configured = loops.map(_.configured).reduce(_ || _) //检查是否有任何循环已经配置完毕
 
   val loop_being_configured_id = Mux(head_loop.configured, tail_loop_id, head_loop_id)
   val loop_being_configured = loops(loop_being_configured_id)
@@ -1227,9 +1229,9 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   assert(ex_utilization >= io.ex_completed, "ex utilization underflow")
 
   // Wire up unrolled command output
-  val is_loop_run_cmd = cmd.bits.cmd.inst.funct === LOOP_CONV_WS
+  val is_loop_run_cmd = cmd.bits.cmd.inst.funct === LOOP_CONV_WS 
   val is_loop_config_cmd = cmd.bits.cmd.inst.funct >= LOOP_CONV_WS_CONFIG_1 && cmd.bits.cmd.inst.funct <= LOOP_CONV_WS_CONFIG_6
-  val is_loop_cmd = is_loop_run_cmd || is_loop_config_cmd
+  val is_loop_cmd = is_loop_run_cmd || is_loop_config_cmd //这里区分从cpu传过来的指令是否要经过LoopConv模块进行处理
 
   io.out.bits.cmd := Mux(loop_configured, unrolled_cmd.bits, cmd.bits.cmd)
   io.out.bits.cmd.status := cmd.bits.cmd.status // TODO This is not guaranteed to be the correct fix! We must fix this
@@ -1244,13 +1246,15 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   // Wire up waiting-for-loads signals
   val ex_is_waiting_for_loads = loops(ex.io.loop_id).ex_started && !loops(ex.io.loop_id).ex_completed &&
     !(loops(ex.io.loop_id).ld_input_completed && loops(ex.io.loop_id).ld_weights_completed &&
-      loops(ex.io.loop_id).ld_bias_completed)
+      loops(ex.io.loop_id).ld_bias_completed) //执行阶段开始且未结束 && input加载未完成 && weights加载未完成 && bias加载未完成
 
-  ld_bias.io.wait_for_prev_loop := ex_is_waiting_for_loads && ld_bias.io.loop_id =/= ex.io.loop_id
+  //对每个加载模块（偏置、权重、输入），如果执行阶段正在等待并且当前加载模块的循环 ID 不等于执行模块的循环 ID，则设置 wait_for_prev_loop 信号
+  ld_bias.io.wait_for_prev_loop := ex_is_waiting_for_loads && ld_bias.io.loop_id =/= ex.io.loop_id 
   ld_weights.io.wait_for_prev_loop := ex_is_waiting_for_loads && ld_weights.io.loop_id =/= ex.io.loop_id
   ld_input.io.wait_for_prev_loop := ex_is_waiting_for_loads && ld_input.io.loop_id =/= ex.io.loop_id
 
   // Wire up overloaded signals
+  //过载信号设置
   ld_bias.io.rob_overloaded := ld_utilization >= max_lds.U
   ld_input.io.rob_overloaded := ld_utilization >= max_lds.U
   ld_weights.io.rob_overloaded := ld_utilization >= max_lds.U

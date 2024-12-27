@@ -5,14 +5,15 @@ import chisel3._
 import chisel3.util._
 
 class PEControl[T <: Data : Arithmetic](accType: T) extends Bundle {
-  val dataflow = UInt(1.W) // TODO make this an Enum
-  val propagate = UInt(1.W) // Which register should be propagated (and which should be accumulated)?
-  val shift = UInt(log2Up(accType.getWidth).W) // TODO this isn't correct for Floats
+  val dataflow = UInt(1.W) // TODO make this an Enum；控制是权驻留还是输出驻留
+  val propagate = UInt(1.W) // Which register should be propagated（传播） (and which should be accumulated)?
+  val shift = UInt(log2Up(accType.getWidth).W) // TODO this isn't correct for Floats；移位数量，shift宽度由accType计算
 
 }
-
+//MacUnit 在矩阵乘法的计算过程中接收两个矩阵元素（in_a 和 in_b），将它们相乘，然后将结果累加到先前的计算结果（in_c）中，最终得到输出。
+//Gemmini 通过大量的 MacUnit 模块（组成 PE 阵列）来并行执行大量的乘累加运算，从而加速矩阵乘法和卷积等操作。
 class MacUnit[T <: Data](inputType: T, cType: T, dType: T) (implicit ev: Arithmetic[T]) extends Module {
-  import ev._
+  import ev._ //通过导入 ev,允许直接使用 Arithmetic[T] 提供的算术操作，比如 mac(乘累加)方法
   val io = IO(new Bundle {
     val in_a  = Input(inputType)
     val in_b  = Input(inputType)

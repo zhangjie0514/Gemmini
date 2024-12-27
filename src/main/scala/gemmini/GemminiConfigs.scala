@@ -23,10 +23,13 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
                                                                              dataflow: Dataflow.Value = Dataflow.BOTH,
 
-                                                                             tileRows: Int = 1,
-                                                                             tileColumns: Int = 1,
+                                                                             tileRows: Int = 1,//原来是1
+                                                                             tileColumns: Int = 1,//原来是1
                                                                              meshRows: Int = 16,
                                                                              meshColumns: Int = 16,
+
+                                                                             /* meshRows: Int = 17,
+                                                                             meshColumns: Int = 17, */
 
                                                                              ld_queue_length: Int = 8,
                                                                              st_queue_length: Int = 2,

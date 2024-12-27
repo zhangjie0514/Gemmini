@@ -12,43 +12,45 @@ import freechips.rocketchip.tilelink._
 import Util._
 
 class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
-  val vaddr = UInt(coreMaxAddrBits.W)
-  val laddr = local_addr_t.cloneType
+  //local_addr_t表示本地地址的类型
+  //scale_t_bits表示缩放因子的位宽
+  val vaddr = UInt(coreMaxAddrBits.W)//虚拟地址
+  val laddr = local_addr_t.cloneType //本地地址
 
   val cols = UInt(16.W) // TODO don't use a magic number for the width here
   val repeats = UInt(16.W) // TODO don't use a magic number for the width here
-  val scale = UInt(scale_t_bits.W)
-  val has_acc_bitwidth = Bool()
+  val scale = UInt(scale_t_bits.W)//缩放因子
+  val has_acc_bitwidth = Bool()//是否具有累加位宽
   val all_zeros = Bool()
-  val block_stride = UInt(16.W) // TODO magic numbers
-  val pixel_repeats = UInt(8.W) // TODO magic numbers
-  val cmd_id = UInt(8.W) // TODO don't use a magic number here
-  val status = new MStatus
+  val block_stride = UInt(16.W) // TODO magic numbers；块步长，用于在读取数据时确定步长
+  val pixel_repeats = UInt(8.W) // TODO magic numbers；像素重复次数？
+  val cmd_id = UInt(8.W) // TODO don't use a magic number here；命令ID
+  val status = new MStatus//当前状态
 
 }
 
-class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: Int)
+class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: Int)//acc_t_bits表示累加器数据位宽
                               (implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val laddr = local_addr_t.cloneType
 
-  val acc_act = UInt(Activation.bitwidth.W) // TODO don't use a magic number for the width here
+  val acc_act = UInt(Activation.bitwidth.W) // TODO don't use a magic number for the width here；累加器激活类型
   val acc_scale = UInt(scale_t_bits.W)
-  val acc_igelu_qb = UInt(acc_t_bits.W)
-  val acc_igelu_qc = UInt(acc_t_bits.W)
-  val acc_iexp_qln2 = UInt(acc_t_bits.W)
-  val acc_iexp_qln2_inv = UInt(acc_t_bits.W)
-  val acc_norm_stats_id = UInt(8.W) // TODO magic number
+  val acc_igelu_qb = UInt(acc_t_bits.W)//表示 I-GELU 算法中的参数
+  val acc_igelu_qc = UInt(acc_t_bits.W)//表示 I-GELU 算法中的参数
+  val acc_iexp_qln2 = UInt(acc_t_bits.W)//表示指数运算中的参数
+  val acc_iexp_qln2_inv = UInt(acc_t_bits.W)//表示逆指数运算中的参数
+  val acc_norm_stats_id = UInt(8.W) // TODO magic number；累加器的归一化统计量 ID
 
-  val len = UInt(16.W) // TODO don't use a magic number for the width here
-  val block = UInt(8.W) // TODO don't use a magic number for the width here
+  val len = UInt(16.W) // TODO don't use a magic number for the width here；数据长度
+  val block = UInt(8.W) // TODO don't use a magic number for the width here；数据块大小
 
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
   val status = new MStatus
 
   // Pooling variables
-  val pool_en = Bool()
-  val store_en = Bool()
+  val pool_en = Bool()//是否池化
+  val store_en = Bool()//是否存储
 
 }
 
@@ -57,7 +59,7 @@ class ScratchpadMemWriteResponse extends Bundle {
 }
 
 class ScratchpadMemReadResponse extends Bundle {
-  val bytesRead = UInt(16.W) // TODO magic number here
+  val bytesRead = UInt(16.W) // TODO magic number here；读取的字节数
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
 }
 
@@ -96,10 +98,15 @@ class ScratchpadWriteIO(val n: Int, val w: Int, val mask_len: Int) extends Bundl
 
 class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, use_shared_ext_mem: Boolean, is_dummy: Boolean) extends Module {
   // This is essentially a pipelined SRAM with the ability to stall pipeline stages
-
+  // n 表示存储单元的数量
+  // w 表示存储单元的宽度（位数）
+  // aligned_to 表示对齐要求
+  // single_ported 表示是否是单端口存储器
+  // use_shared_ext_mem 表示是否使用共享外部存储器
+  // is_dummy 表示是否是虚拟存储器
   require(w % aligned_to == 0 || w < aligned_to)
-  val mask_len = (w / (aligned_to * 8)) max 1 // How many mask bits are there?
-  val mask_elem = UInt((w min (aligned_to * 8)).W) // What datatype does each mask bit correspond to?
+  val mask_len = (w / (aligned_to * 8)) max 1 // 16 How many mask bits are there?；掩码长度
+  val mask_elem = UInt((w min (aligned_to * 8)).W) // 8 What datatype does each mask bit correspond to?；掩码位宽
 
   val io = IO(new Bundle {
     val read = Flipped(new ScratchpadReadIO(n, w))
@@ -107,11 +114,11 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     val ext_mem = if (use_shared_ext_mem) Some(new ExtMemIO) else None
   })
 
-  val (read, write) = if (is_dummy) {
+  val (read, write) = if (is_dummy) {     //如果是虚拟存储器，那么读写函数不需要进行实质性的操作
     def read(addr: UInt, ren: Bool): Data = 0.U
     def write(addr: UInt, wdata: Vec[UInt], wmask: Vec[Bool]): Unit = { }
     (read _, write _)
-  } else if (use_shared_ext_mem) {
+  } else if (use_shared_ext_mem) {        //如果是使用外部共享存储器，将接口接到外部
     def read(addr: UInt, ren: Bool): Data = {
       io.ext_mem.get.read_en := ren
       io.ext_mem.get.read_addr := addr
@@ -128,7 +135,7 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
       io.ext_mem.get.write_mask := wmask.asUInt
     }
     (read _, write _)
-  } else {
+  } else {                                 //如果是访问内部存储器，创建一个同步存储器并对其进行读写操作
     val mem = SyncReadMem(n, Vec(mask_len, mask_elem))
     def read(addr: UInt, ren: Bool): Data = mem.read(addr, ren)
     def write(addr: UInt, wdata: Vec[UInt], wmask: Vec[Bool]) = mem.write(addr, wdata, wmask)
@@ -136,12 +143,12 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
   }
 
   // When the scratchpad is single-ported, the writes take precedence
-  val singleport_busy_with_write = single_ported.B && io.write.en
+  val singleport_busy_with_write = single_ported.B && io.write.en//在单端口模式下，写入操作是否正在进行
 
   when (io.write.en) {
-    if (aligned_to >= w)
+    if (aligned_to >= w)//根据掩码全为1写入
       write(io.write.addr, io.write.data.asTypeOf(Vec(mask_len, mask_elem)), VecInit((~(0.U(mask_len.W))).asBools))
-    else
+    else                //根据输入的掩码写入
       write(io.write.addr, io.write.data.asTypeOf(Vec(mask_len, mask_elem)), io.write.mask)
   }
 
@@ -158,11 +165,14 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
 
   // Make a queue which buffers the result of an SRAM read if it can't immediately be consumed
   val q = Module(new Queue(new ScratchpadReadResp(w), 1, true, true))
+  // 1：指定队列的深度为 1，意味着这个队列最多只能存储一个元素。
+  // true：第一个 true 参数表示队列是一个先入先出（FIFO）队列。
+  // true：第二个 true 参数表示队列支持流（flow）模式。在流模式下，如果队列是空的且有新的数据到达，数据可以直接通过队列而不需要先被存储 
   q.io.enq.valid := RegNext(ren)
   q.io.enq.bits.data := rdata
   q.io.enq.bits.fromDMA := RegNext(fromDMA)
 
-  val q_will_be_empty = (q.io.count +& q.io.enq.fire) - q.io.deq.fire === 0.U
+  val q_will_be_empty = (q.io.count +& q.io.enq.fire) - q.io.deq.fire === 0.U//在当前时钟周期之后，队列是否会变为空
   io.read.req.ready := q_will_be_empty && !singleport_busy_with_write
 
   io.read.resp <> q.io.deq
@@ -175,31 +185,31 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   import config._
   import ev._
 
-  val maxBytes = dma_maxbytes
-  val dataBits = dma_buswidth
+  val maxBytes = dma_maxbytes//从配置中读取 DMA 的最大字节数
+  val dataBits = dma_buswidth//从配置中读取 DMA 总线宽度
 
   val block_rows = meshRows * tileRows
   val block_cols = meshColumns * tileColumns
-  val spad_w = inputType.getWidth *  block_cols
-  val acc_w = accType.getWidth * block_cols
+  val spad_w = inputType.getWidth *  block_cols//计算片上缓存的宽度，等于 inputType 的宽度乘以 block_cols
+  val acc_w = accType.getWidth * block_cols    //计算累加缓存的宽度，等于 accType 的宽度乘以 block_cols
 
   val id_node = TLIdentityNode()
   val xbar_node = TLXbar()
 
   val reader = LazyModule(new StreamReader(config, max_in_flight_mem_reqs, dataBits, maxBytes, spad_w, acc_w, aligned_to,
     sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows, use_tlb_register_filter,
-    use_firesim_simulation_counters))
+    use_firesim_simulation_counters))//实例化一个 StreamReader 模块，用于处理内存读取操作
   val writer = LazyModule(new StreamWriter(max_in_flight_mem_reqs, dataBits, maxBytes,
     if (acc_read_full_width) acc_w else spad_w, aligned_to, inputType, block_cols, use_tlb_register_filter,
-    use_firesim_simulation_counters))
+    use_firesim_simulation_counters))//实例化一个 StreamWriter 模块，用于处理内存写入操作
 
   // TODO make a cross-bar vs two separate ports a config option
   // id_node :=* reader.node
   // id_node :=* writer.node
 
-  xbar_node := TLBuffer() := reader.node // TODO
-  xbar_node := TLBuffer() := writer.node
-  id_node := TLWidthWidget(config.dma_buswidth/8) := TLBuffer() := xbar_node
+  xbar_node := TLBuffer() := reader.node // TODO;将 reader 模块的节点通过缓冲区 (TLBuffer) 连接到交叉开关节点 (xbar_node)
+  xbar_node := TLBuffer() := writer.node//将 writer 模块的节点通过缓冲区 (TLBuffer) 连接到交叉开关节点 (xbar_node)
+  id_node := TLWidthWidget(config.dma_buswidth/8) := TLBuffer() := xbar_node//将 xbar_node 通过宽度调整器 (TLWidthWidget) 和缓冲区连接到 id_node
 
   lazy val module = new Impl
   class Impl extends LazyModuleImp(this) with HasCoreParameters {
@@ -349,7 +359,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     read_issue_q.io.deq.ready := reader.module.io.req.ready
     reader.module.io.req.bits.vaddr := read_issue_q.io.deq.bits.vaddr
     reader.module.io.req.bits.spaddr := Mux(read_issue_q.io.deq.bits.laddr.is_acc_addr,
-      read_issue_q.io.deq.bits.laddr.full_acc_addr(), read_issue_q.io.deq.bits.laddr.full_sp_addr())
+     read_issue_q.io.deq.bits.laddr.full_acc_addr(), read_issue_q.io.deq.bits.laddr.full_sp_addr())
     reader.module.io.req.bits.len := read_issue_q.io.deq.bits.cols
     reader.module.io.req.bits.repeats := read_issue_q.io.deq.bits.repeats
     reader.module.io.req.bits.pixel_repeats := read_issue_q.io.deq.bits.pixel_repeats
@@ -458,7 +468,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
         val ex_read_req = io.srams.read(i).req
         val exread = ex_read_req.valid
-
+ 
         // TODO we tie the write dispatch queue's, and write issue queue's, ready and valid signals together here
         val dmawrite = write_dispatch_q.valid && write_norm_q.io.enq.ready &&
           !write_dispatch_q.bits.laddr.is_garbage() &&
@@ -530,7 +540,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           !((mvin_scale_pixel_repeater.io.resp.valid && mvin_scale_pixel_repeater.io.resp.bits.last) || (mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.last))
 
         bio.write.en := exwrite || dmaread || zerowrite
-
+ 
         when (exwrite) {
           bio.write.addr := io.srams.write(i).addr
           bio.write.data := io.srams.write(i).data
@@ -646,7 +656,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val bank_ios = VecInit(banks.map(_.io))
 
       // Getting the output of the bank that's about to be issued to the writer
-      val bank_issued_io = bank_ios(write_issue_q.io.deq.bits.laddr.acc_bank())
+      val bank_issued_io = bank_ios(write_issue_q.io.deq.bits.laddr.acc_bank()) 
 
       // Reading from the Accumulator banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
