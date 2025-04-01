@@ -34,6 +34,7 @@ object GemminiISA {
 
   val CLKGATE_EN = 22.U
   val ADD_TEST = 23.U
+  val PRINT = 24.U
 
   // rs1[2:0] values
   val CONFIG_EX = 0.U

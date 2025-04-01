@@ -170,6 +170,37 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // Wire up controllers to ROB
   reservation_station.io.alloc.valid := false.B
   reservation_station.io.alloc.bits := unrolled_cmd.bits
+  // 测量延迟周期数
+/*   val latency_Reg_mvin = RegInit(0.U(50.W))
+  dontTouch(latency_Reg_mvin)
+  when((unrolled_cmd.bits.cmd.inst.funct === 1.U || unrolled_cmd.bits.cmd.inst.funct === 2.U) && unrolled_cmd.valid){
+    latency_Reg_mvin := latency_Reg_mvin + 1.U
+  }
+  val latency_Reg_mvout = RegInit(0.U(50.W))
+  dontTouch(latency_Reg_mvout)
+  when((unrolled_cmd.bits.cmd.inst.funct === 3.U) && unrolled_cmd.valid){
+    latency_Reg_mvout := latency_Reg_mvout + 1.U
+  }
+  val latency_Reg_compute = RegInit(0.U(50.W))
+  dontTouch(latency_Reg_compute)
+  when((unrolled_cmd.bits.cmd.inst.funct === 4.U || unrolled_cmd.bits.cmd.inst.funct === 5.U || unrolled_cmd.bits.cmd.inst.funct === 6.U) && unrolled_cmd.valid){
+    latency_Reg_compute := latency_Reg_compute + 1.U
+  }
+  when((unrolled_cmd.bits.cmd.inst.funct === 23.U) && unrolled_cmd.valid){
+    printf(p"frequency of mvin = $latency_Reg_mvin\n")
+    printf(p"frequency of mvout = $latency_Reg_mvout\n")
+    printf(p"frequency of compute = $latency_Reg_compute\n")
+  } */
+  /* val latency_Reg_nums = RegInit(0.U(50.W))
+  dontTouch(latency_Reg_nums)
+  when(unrolled_cmd.bits.cmd.inst.funct === 23.U && unrolled_cmd.valid){
+    latency_Reg_nums := latency_Reg_nums + 1.U
+  }
+  when(unrolled_cmd.bits.cmd.inst.funct === 24.U && unrolled_cmd.valid){
+    printf(p"nums = $latency_Reg_nums\n")
+  } */
+
+
 
   /*
   //-------------------------------------------------------------------------
@@ -236,6 +267,15 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   }
   */
 
+  //和测试额外加的spad有关的
+  for(i <- 0 until sp_banks){
+  spad.module.io.srams_test.read(i).resp.ready := true.B
+  }
+  for(i <- 0 until sp_banks){
+  spad.module.io.srams_test.read(i).req.valid := DontCare
+  spad.module.io.srams_test.read(i).req.bits := DontCare
+  }
+
   load_controller.io.cmd.valid := reservation_station.io.issue.ld.valid
   reservation_station.io.issue.ld.ready := load_controller.io.cmd.ready
   load_controller.io.cmd.bits := reservation_station.io.issue.ld.cmd
@@ -265,7 +305,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   spad.module.io.acc.read_req <> ex_controller.io.acc.read_req
   ex_controller.io.acc.read_resp <> spad.module.io.acc.read_resp
   ex_controller.io.acc.write <> spad.module.io.acc.write
- 
+
   // Im2Col unit
   val im2col = withClock (gated_clock) { Module(new Im2Col(outer.config)) }
 
@@ -323,13 +363,13 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   //-------------------------------------------------------------------------
   // risc
   val reservation_station_completed_arb = Module(new Arbiter(UInt(log2Up(reservation_station_entries).W), 4)) //2024.11.11修改
-  reservation_station_completed_arb.io.in(0) <> add_test.io.completed //2024.11.11修改
+  reservation_station_completed_arb.io.in(3) <> add_test.io.completed //2024.11.11修改
   
-  reservation_station_completed_arb.io.in(1).valid := ex_controller.io.completed.valid //2024.11.11修改
-  reservation_station_completed_arb.io.in(1).bits := ex_controller.io.completed.bits   //2024.11.11修改
+  reservation_station_completed_arb.io.in(0).valid := ex_controller.io.completed.valid //2024.11.11修改
+  reservation_station_completed_arb.io.in(0).bits := ex_controller.io.completed.bits   //2024.11.11修改
 
-  reservation_station_completed_arb.io.in(2) <> load_controller.io.completed  //2024.11.11修改
-  reservation_station_completed_arb.io.in(3) <> store_controller.io.completed //2024.11.11修改
+  reservation_station_completed_arb.io.in(1) <> load_controller.io.completed  //2024.11.11修改
+  reservation_station_completed_arb.io.in(2) <> store_controller.io.completed //2024.11.11修改
 
   // mux with cisc frontend arbiter
   //reservation_station_completed_arb.io.in(0).valid := ex_controller.io.completed.valid // && !is_cisc_mode；2024.11.11注释
@@ -443,4 +483,114 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // Performance Counters Access
   //=========================================================================
 
+  val LatencySimulation_WriteAccumlator_test = Module(new LatencySimulation_WriteAccumlator(xLen, tagWidth, outer.config))
+  LatencySimulation_WriteAccumlator_test.io.in.acc := MuxCase(DontCare, Seq(
+                                                       ex_controller.io.acc.write(0).valid -> ex_controller.io.acc.write(0).bits.acc,
+                                                       ex_controller.io.acc.write(1).valid -> ex_controller.io.acc.write(1).bits.acc
+                                                      ))
+  LatencySimulation_WriteAccumlator_test.io.in.addr := MuxCase(DontCare, Seq(
+                                                       ex_controller.io.acc.write(0).valid -> ex_controller.io.acc.write(0).bits.addr,
+                                                       ex_controller.io.acc.write(1).valid -> ex_controller.io.acc.write(1).bits.addr
+                                                      ))
+  LatencySimulation_WriteAccumlator_test.io.in.data := MuxCase(DontCare, Seq(
+                                                       ex_controller.io.acc.write(0).valid -> ex_controller.io.acc.write(0).bits.data,
+                                                       ex_controller.io.acc.write(1).valid -> ex_controller.io.acc.write(1).bits.data
+                                                      ))
+  LatencySimulation_WriteAccumlator_test.io.in.mask := MuxCase(DontCare, Seq(
+                                                       ex_controller.io.acc.write(0).valid -> ex_controller.io.acc.write(0).bits.mask,
+                                                       ex_controller.io.acc.write(1).valid -> ex_controller.io.acc.write(1).bits.mask
+                                                      ))
+  LatencySimulation_WriteAccumlator_test.io.addr_banks_in := MuxCase(DontCare, Seq(
+                                                              ex_controller.io.acc.write(0).valid -> 0.U,
+                                                              ex_controller.io.acc.write(1).valid -> 1.U
+                                                             ))
+  LatencySimulation_WriteAccumlator_test.io.valid_in := ex_controller.io.acc.write(0).valid ||
+                                                        ex_controller.io.acc.write(1).valid
+  LatencySimulation_WriteAccumlator_test.io.Verification_completed := ex_controller.io.Verification_completed
+  
+/*   val LatencySimulation_ReadSpad_test_0 = Module(new LatencySimulation_ReadSpad(inputType.getWidth * meshRows * tileRows , meshRows * tileRows))
+  LatencySimulation_ReadSpad_test_0.io.in.data := spad.module.io.srams.read(0).resp.bits.data
+  LatencySimulation_ReadSpad_test_0.io.in.fromDMA := spad.module.io.srams.read(0).resp.bits.fromDMA
+  LatencySimulation_ReadSpad_test_0.io.valid_in := spad.module.io.srams.read(0).resp.valid
+  LatencySimulation_ReadSpad_test_0.io.Verification_completed := Mux(spad.module.io.addr_banks === 0.U, spad.module.io.Verification_completed, false.B)
+  val LatencySimulation_ReadSpad_test_1 = Module(new LatencySimulation_ReadSpad(inputType.getWidth * meshRows * tileRows , meshRows * tileRows))
+  LatencySimulation_ReadSpad_test_1.io.in.data := spad.module.io.srams.read(1).resp.bits.data
+  LatencySimulation_ReadSpad_test_1.io.in.fromDMA := spad.module.io.srams.read(1).resp.bits.fromDMA
+  LatencySimulation_ReadSpad_test_1.io.valid_in := spad.module.io.srams.read(1).resp.valid
+  LatencySimulation_ReadSpad_test_1.io.Verification_completed := Mux(spad.module.io.addr_banks === 1.U, spad.module.io.Verification_completed, false.B)
+  val LatencySimulation_ReadSpad_test_2 = Module(new LatencySimulation_ReadSpad(inputType.getWidth * meshRows * tileRows , meshRows * tileRows))
+  LatencySimulation_ReadSpad_test_2.io.in.data := spad.module.io.srams.read(2).resp.bits.data
+  LatencySimulation_ReadSpad_test_2.io.in.fromDMA := spad.module.io.srams.read(2).resp.bits.fromDMA
+  LatencySimulation_ReadSpad_test_2.io.valid_in := spad.module.io.srams.read(2).resp.valid
+  LatencySimulation_ReadSpad_test_2.io.Verification_completed := Mux(spad.module.io.addr_banks === 2.U, spad.module.io.Verification_completed, false.B)
+  val LatencySimulation_ReadSpad_test_3 = Module(new LatencySimulation_ReadSpad(inputType.getWidth * meshRows * tileRows , meshRows * tileRows))
+  LatencySimulation_ReadSpad_test_3.io.in.data := spad.module.io.srams.read(3).resp.bits.data
+  LatencySimulation_ReadSpad_test_3.io.in.fromDMA := spad.module.io.srams.read(3).resp.bits.fromDMA
+  LatencySimulation_ReadSpad_test_3.io.valid_in := spad.module.io.srams.read(3).resp.valid
+  LatencySimulation_ReadSpad_test_3.io.Verification_completed := Mux(spad.module.io.addr_banks === 3.U, spad.module.io.Verification_completed, false.B)
+
+  ex_controller.io.srams.read(0).req <> spad.module.io.srams.read(0).req
+  ex_controller.io.srams.read(0).resp.bits.data := LatencySimulation_ReadSpad_test_0.io.out.data
+  ex_controller.io.srams.read(0).resp.bits.fromDMA := LatencySimulation_ReadSpad_test_0.io.out.fromDMA
+  ex_controller.io.srams.read(0).resp.valid := LatencySimulation_ReadSpad_test_0.io.valid_out
+  spad.module.io.srams.read(0).resp.ready := ex_controller.io.srams.read(0).resp.ready */
+  
+  // 批量生成 4 个 LatencySimulation_ReadSpad 模块并连接
+  /* for (i <- 0 until sp_banks) {
+    // 1. 创建模块实例
+    val latencyModule = Module(new LatencySimulation_ReadSpad(
+      inputType.getWidth * meshRows * tileRows,
+      meshRows * tileRows
+    ))
+
+    // 2. 连接输入信号（spad -> latencyModule）
+    latencyModule.io.in.data         := spad.module.io.srams.read(i).resp.bits.data
+    latencyModule.io.in.fromDMA      := spad.module.io.srams.read(i).resp.bits.fromDMA
+    latencyModule.io.valid_in        := spad.module.io.srams.read(i).resp.valid
+    latencyModule.io.Verification_completed := Mux(
+      spad.module.io.addr_banks === i.U,
+      spad.module.io.Verification_completed,
+      false.B
+    )
+
+    // 3. 连接输出信号（latencyModule -> ex_controller）
+    ex_controller.io.srams.read(i).req               <> spad.module.io.srams.read(i).req
+    ex_controller.io.srams.read(i).resp.bits.data    := latencyModule.io.out.data
+    ex_controller.io.srams.read(i).resp.bits.fromDMA := latencyModule.io.out.fromDMA
+    ex_controller.io.srams.read(i).resp.valid        := latencyModule.io.valid_out
+    spad.module.io.srams.read(i).resp.ready          := ex_controller.io.srams.read(i).resp.ready
+  } */
+  ex_controller.io.Verification_completed_in := spad.module.io.Verification_completed
+  ex_controller.io.addr_banks := spad.module.io.addr_banks
+
+  spad.module.io.checksum := ex_controller.io.checksum
+  spad.module.io.checksum_addr := ex_controller.io.checksum_addr
+  spad.module.io.checksum_valid := ex_controller.io.checksum_valid
+  spad.module.io.a_rows := ex_controller.io.a_rows
+  spad.module.io.checksum_addr_banks := ex_controller.io.checksum_addr_banks
+
+  spad.module.io.data_foracc_mem_test := LatencySimulation_WriteAccumlator_test.io.out
+  spad.module.io.valid_foracc_mem_test := LatencySimulation_WriteAccumlator_test.io.valid_out
+  spad.module.io.addr_banks_foracc_mem_test := LatencySimulation_WriteAccumlator_test.io.addr_banks_out
+
+  val latency_Reg_nums = RegInit(0.U(50.W))
+  dontTouch(latency_Reg_nums)
+  when((io.cmd.bits.inst.funct === 23.U || io.cmd.bits.inst.funct === 8.U) && io.cmd.fire){
+    latency_Reg_nums := latency_Reg_nums + 1.U
+  }
+  val latency_Reg_compute = RegInit(0.U(50.W))
+  dontTouch(latency_Reg_compute)
+  when((io.cmd.bits.inst.funct === 4.U || io.cmd.bits.inst.funct === 5.U || io.cmd.bits.inst.funct === 6.U) && io.cmd.fire){
+    latency_Reg_compute := latency_Reg_compute + 1.U
+  }
+  val latency_Reg_compute_1 = RegInit(0.U(50.W))
+  dontTouch(latency_Reg_compute)
+  when(ex_controller.io.cmd.fire && (ex_controller.io.cmd.bits.cmd.inst.funct === COMPUTE_AND_STAY_CMD || ex_controller.io.cmd.bits.cmd.inst.funct === COMPUTE_AND_FLIP_CMD)){
+    latency_Reg_compute_1 := latency_Reg_compute_1 + 1.U
+  }
+  when(io.cmd.bits.inst.funct === 24.U && io.cmd.fire){
+    printf(p"nums = $latency_Reg_nums\n")
+    printf(p"frequency of compute = $latency_Reg_compute\n")
+    printf(p"frequency of compute_1 = $latency_Reg_compute_1\n")
+  }
 }

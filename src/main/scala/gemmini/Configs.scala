@@ -26,15 +26,17 @@ object GemminiConfigs {
     spatialArrayOutputType = SInt(20.W),
 
     // Spatial array size options
-    tileRows = 1,
+    tileRows = 1,// 1
     tileColumns = 1,
-    meshRows = 16,
+    meshRows = 16,// 16
     meshColumns = 16,
 
     // Spatial array PE options
     dataflow = Dataflow.BOTH,
 
     // Scratchpad and accumulator
+    // sp_capacity = CapacityInKilobytes(256),
+    // acc_capacity = CapacityInKilobytes(64),
     sp_capacity = CapacityInKilobytes(256),
     acc_capacity = CapacityInKilobytes(64),
 
@@ -61,12 +63,15 @@ object GemminiConfigs {
 
     // DMA options
     max_in_flight_mem_reqs = 16,
-
     dma_maxbytes = 64,
     dma_buswidth = 128,
+    // max_in_flight_mem_reqs = 16,
+    // dma_maxbytes = 1024,
+    // dma_buswidth = 2048,
 
     // TLB options
     tlb_size = 4,
+    // tlb_size = 64,
 
     // Mvin and Accumulator scalar multiply options
     mvin_scale_args = Some(ScaleArguments(

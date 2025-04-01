@@ -14,9 +14,11 @@ class AccumulatorReadReq[T <: Data: Arithmetic, U <: Data](n: Int, acc_t: T, sca
   val iexp_qln2_inv = acc_t.cloneType
   val act = UInt(Activation.bitwidth.W) // TODO magic number
   val full = Bool() // Whether or not we return the full bitwidth output
-
   val fromDMA = Bool()
+}
 
+class AccumulatorReadReq_Simplify[T <: Data: Arithmetic, U <: Data](n: Int, acc_t: T, scale_t: U) extends Bundle {
+  val addr = UInt(log2Ceil(n).W)
 }
 
 class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Vec[T]], scale_t: U) extends Bundle {
@@ -31,9 +33,18 @@ class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Ve
   val acc_bank_id = UInt(2.W) // TODO magic number
 }
 
+class AccumulatorReadResp_Simplify[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Vec[T]], scale_t: U) extends Bundle {
+  val data = fullDataType.cloneType
+}
+
 class AccumulatorReadIO[T <: Data: Arithmetic, U <: Data](n: Int, fullDataType: Vec[Vec[T]], scale_t: U) extends Bundle {
   val req = Decoupled(new AccumulatorReadReq[T, U](n, fullDataType.head.head.cloneType, scale_t))
   val resp = Flipped(Decoupled(new AccumulatorReadResp[T, U](fullDataType, scale_t)))
+}
+
+class AccumulatorReadIO_Simplify[T <: Data: Arithmetic, U <: Data](n: Int, fullDataType: Vec[Vec[T]], scale_t: U) extends Bundle {
+  val req = Decoupled(new AccumulatorReadReq_Simplify[T, U](n, fullDataType.head.head.cloneType, scale_t))
+  val resp = Flipped(Decoupled(new AccumulatorReadResp_Simplify[T, U](fullDataType, scale_t)))
 }
 
 class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends Bundle {
@@ -43,11 +54,26 @@ class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends
   val mask = Vec(t.getWidth / 8, Bool()) // TODO Use aligned_to here
 }
 
-
 class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]], scale_t: U,
   acc_sub_banks: Int, use_shared_ext_mem: Boolean
 ) extends Bundle {
   val read = Flipped(new AccumulatorReadIO(n, t, scale_t))
+  val write = Flipped(Decoupled(new AccumulatorWriteReq(n, t)))
+
+  val ext_mem = if (use_shared_ext_mem) Some(Vec(acc_sub_banks, new ExtMemIO)) else None
+
+  val adder = new Bundle {
+    val valid = Output(Bool())
+    val op1 = Output(t.cloneType)
+    val op2 = Output(t.cloneType)
+    val sum = Input(t.cloneType)
+  }
+}
+
+class AccumulatorMemIO_Simplify [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]], scale_t: U,
+  acc_sub_banks: Int, use_shared_ext_mem: Boolean
+) extends Bundle {
+  val read = Flipped(new AccumulatorReadIO_Simplify(n, t, scale_t))
   val write = Flipped(Decoupled(new AccumulatorWriteReq(n, t)))
 
   val ext_mem = if (use_shared_ext_mem) Some(Vec(acc_sub_banks, new ExtMemIO)) else None
@@ -107,6 +133,10 @@ class AccumulatorMem[T <: Data, U <: Data](
 
   // TODO unify this with TwoPortSyncMemIO
   val io = IO(new AccumulatorMemIO(n, t, scale_t, acc_sub_banks, use_shared_ext_mem))
+  dontTouch(io.read.req.ready)
+  dontTouch(io.read.resp.bits)
+  dontTouch(io.read.resp.valid)
+  dontTouch(io.write.ready)
 
   require (acc_latency >= 2)
 
@@ -322,7 +352,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   io.read.resp.bits.acc_bank_id := DontCare // This is set in Scratchpad
   io.read.resp.valid := p.valid
   p.ready := io.read.resp.ready
-
+  
   val q_will_be_empty = (q.io.count +& q.io.enq.fire) - q.io.deq.fire === 0.U
   io.read.req.ready := q_will_be_empty && (
       // Make sure we aren't accumulating, which would take over both ports
@@ -332,6 +362,121 @@ class AccumulatorMem[T <: Data, U <: Data](
   )
 
   io.write.ready := !block_write_req &&
+    !pipelined_writes.map(r => r.valid && r.bits.addr === io.write.bits.addr && io.write.bits.acc).reduce(_||_)
+
+  when (reset.asBool) {
+    pipelined_writes.foreach(_.valid := false.B)
+  }
+
+  // assert(!(io.read.req.valid && io.write.en && io.write.acc), "reading and accumulating simultaneously is not supported")
+  assert(!(io.read.req.fire && io.write.fire && io.read.req.bits.addr === io.write.bits.addr), "reading from and writing to same address is not supported")
+}
+
+//简化AccumulatorMem
+class AccumulatorMem_Simplify[T <: Data, U <: Data](
+  n: Int, t: Vec[Vec[T]], scale_func: (T, U) => T, scale_t: U,
+  acc_singleported: Boolean, acc_sub_banks: Int,
+  use_shared_ext_mem: Boolean,
+  acc_latency: Int, acc_type: T, is_dummy: Boolean
+)
+  (implicit ev: Arithmetic[T]) extends Module {
+  import ev._
+
+  // TODO unify this with TwoPortSyncMemIO
+  val io = IO(new AccumulatorMemIO_Simplify(n, t, scale_t, acc_sub_banks, use_shared_ext_mem))
+  dontTouch(io.read.req.ready)
+  dontTouch(io.read.resp.bits)
+  dontTouch(io.read.resp.valid)
+  dontTouch(io.write.ready)
+
+  // 添加初始化状态寄存器
+  val initDone = RegInit(false.B)
+  val initAddr = RegInit(0.U(log2Ceil(n).W))
+  // 初始化状态机
+  when (!initDone && !reset.asBool()) {
+    initAddr := initAddr + 1.U
+    when (initAddr === (n-1).U) {
+      initDone := true.B
+    }
+  }
+
+  require (acc_latency >= 2)
+
+  val pipelined_writes = Reg(Vec(acc_latency, Valid(new AccumulatorWriteReq(n, t))))
+  val oldest_pipelined_write = pipelined_writes(acc_latency-1)
+  pipelined_writes(0).valid := io.write.fire
+  pipelined_writes(0).bits  := io.write.bits
+  for (i <- 1 until acc_latency) {
+    pipelined_writes(i) := pipelined_writes(i-1)
+  }
+
+  val rdata_for_adder = Wire(t)
+  rdata_for_adder := DontCare
+  val rdata_for_read_resp = Wire(t)
+  rdata_for_read_resp := DontCare
+
+  val adder_sum = io.adder.sum
+  io.adder.valid := pipelined_writes(0).valid && pipelined_writes(0).bits.acc
+  io.adder.op1 := rdata_for_adder
+  io.adder.op2 := pipelined_writes(0).bits.data
+
+  val block_read_req = WireInit(false.B)
+  val block_write_req = WireInit(false.B)
+
+  val mask_len = t.getWidth / 8
+  val mask_elem = UInt((t.getWidth / mask_len).W)
+
+  val initMask = Wire(Vec(mask_len, Bool()))
+  initMask.foreach(_ := true.B) // 初始化阶段全使能
+
+  if (!acc_singleported && !is_dummy) { 
+    require(!use_shared_ext_mem)
+    val mem = TwoPortSyncMem(n, t, mask_len) // TODO We assume byte-alignment here. Use aligned_to instead
+    when(initDone){
+      mem.io.waddr := oldest_pipelined_write.bits.addr
+      mem.io.wen := oldest_pipelined_write.valid
+      mem.io.wdata := Mux(oldest_pipelined_write.bits.acc, adder_sum, oldest_pipelined_write.bits.data)
+      mem.io.mask := oldest_pipelined_write.bits.mask
+      rdata_for_adder := mem.io.rdata
+      rdata_for_read_resp := mem.io.rdata
+      mem.io.raddr := Mux(io.write.fire && io.write.bits.acc, io.write.bits.addr, io.read.req.bits.addr)
+      mem.io.ren := io.read.req.fire || (io.write.fire && io.write.bits.acc)
+    }.otherwise {
+      // 初始化阶段写零
+      mem.io.waddr := initAddr
+      mem.io.wen := true.B
+      mem.io.wdata := 0.U.asTypeOf(t)  // 零初始化
+      mem.io.mask := initMask  // 全掩码使能
+      mem.io.raddr := DontCare
+      mem.io.ren := false.B
+    }
+  }
+
+  val q = Module(new Queue(new AccumulatorReadResp_Simplify(t, scale_t),  1, true, true))
+  q.io.enq.bits.data := rdata_for_read_resp
+
+  if (is_dummy) {
+    rdata_for_read_resp := DontCare
+    rdata_for_adder := DontCare
+  }
+
+  q.io.enq.valid := RegNext(io.read.req.fire)
+
+  val p = q.io.deq
+
+  io.read.resp.bits.data := p.bits.data
+  io.read.resp.valid := p.valid
+  p.ready := io.read.resp.ready
+  
+  val q_will_be_empty = (q.io.count +& q.io.enq.fire) - q.io.deq.fire === 0.U
+  io.read.req.ready := initDone && q_will_be_empty && (
+      // Make sure we aren't accumulating, which would take over both ports
+      !(io.write.valid && io.write.bits.acc) &&
+      !pipelined_writes.map(r => r.valid && r.bits.addr === io.read.req.bits.addr).reduce(_||_)  &&
+      !block_read_req
+  )
+
+  io.write.ready := initDone && !block_write_req &&
     !pipelined_writes.map(r => r.valid && r.bits.addr === io.write.bits.addr && io.write.bits.acc).reduce(_||_)
 
   when (reset.asBool) {

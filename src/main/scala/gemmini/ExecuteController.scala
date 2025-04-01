@@ -7,6 +7,7 @@ import GemminiISA._
 import Util._
 import org.chipsalliance.cde.config.Parameters
 import midas.targetutils.PerfCounter
+import shapeless.ops.nat.Mod
 
 // TODO do we still need to flush when the dataflow is weight stationary? Won't the result just keep travelling through on its own?
 class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T, U, V])
@@ -15,6 +16,16 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   import ev._
 
   val io = IO(new Bundle {
+    val Verification_completed = Output(Bool())//自己加的
+    val Verification_completed_in = Input(Bool())
+    val addr_banks = Input(UInt(log2Ceil(sp_banks).W))
+    val checksum = Output(Vec(meshColumns * tileColumns, accType))
+    val checksum_addr = Output(UInt(log2Ceil(acc_bank_entries).W))
+    val checksum_addr_banks = Output(UInt(log2Ceil(acc_banks).W))
+    val checksum_valid = Output(Bool())
+    val a_rows = Output(UInt(log2Ceil(meshRows * tileRows).W))
+    
+
     val cmd = Flipped(Decoupled(new GemminiCmd(reservation_station_entries)))
 
     val im2col = new Bundle {
@@ -46,7 +57,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     val counter = new CounterEventIO()
   })
-
+  
   val block_size = meshRows*tileRows
 
   val mesh_tag = new Bundle with TagQueueTag {
@@ -171,16 +182,15 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val c_rows = rs2s(preload_cmd_place)(48 + log2Up(block_size + 1) - 1, 48) // TODO magic numbers;表示矩阵 C 的行数
 
   // Dependency stuff
-  io.completed.valid := false.B//表示当前指令是否已经执行完成
+  io.completed.valid := false.B
   io.completed.bits := DontCare
 
   // val pending_completed_rob_id = Reg(UDValid(UInt(log2Up(rob_entries).W)))
   val pending_completed_rob_ids = Reg(Vec(2, UDValid(UInt(log2Up(reservation_station_entries).W))))//存储两个即将完成的指令的 ROB ID
 
   // Instantiate a queue which queues up signals which must be fed into the mesh
-  val mesh_cntl_signals_q = Module(new Queue(new ComputeCntlSignals, spad_read_delay+1,
-    pipe=true))//当 pipe = true 时，队列的输入和输出可以在同一个时钟周期内同时进行（即可以在同一周期内入队和出队）
-
+  val mesh_cntl_signals_q = Module(new Queue(new ComputeCntlSignals, spad_read_delay+1, pipe=true))
+  //val mesh_cntl_signals_q = Module(new Queue(new ComputeCntlSignals, 100, pipe=true))
   val cntl_ready = mesh_cntl_signals_q.io.enq.ready
   val cntl_valid = mesh_cntl_signals_q.io.deq.valid
   val cntl = mesh_cntl_signals_q.io.deq.bits
@@ -435,12 +445,29 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     d_fire_counter_mulpre := d_fire_counter - mul_pre_counter_sub
   }.otherwise{d_fire_counter_mulpre := d_fire_counter}
 
+
+  //加一组寄存器来辅助判断从spad拿过来数据的有效性
+  val dataA_spadbank = RegInit(0.U(2.W))
+  val dataB_spadbank = RegInit(0.U(2.W))
+  val dataD_spadbank = RegInit(0.U(2.W))
   // Scratchpad reads
   for (i <- 0 until sp_banks) {
     //是否需要从存储器读取矩阵 A、B 和 D 的数据
     val read_a = a_valid && !a_read_from_acc && dataAbank === i.U && start_inputting_a && !multiply_garbage && a_row_is_not_all_zeros && !(im2col_wire&&im2col_en)
     val read_b = b_valid && !b_read_from_acc && dataBbank === i.U && start_inputting_b && !accumulate_zeros && b_row_is_not_all_zeros //&& !im2col_wire
     val read_d = d_valid && !d_read_from_acc && dataDbank === i.U && start_inputting_d && !preload_zeros && d_row_is_not_all_zeros //&& !im2col_wire
+
+    /* val read_d_reg = RegNext(read_d)
+    dontTouch(read_d_reg)
+    val dataDbank_reg = RegNext(dataDbank)
+    dontTouch(dataDbank_reg) */
+    when(read_a){
+      dataA_spadbank := i.asUInt
+    }.elsewhen(read_b){
+      dataB_spadbank := i.asUInt
+    }.elsewhen(read_d){
+      dataD_spadbank := i.asUInt
+    }
 
     //检查存储器是否准备好
     Seq((read_a, a_ready), (read_b, b_ready), (read_d, d_ready)).foreach { case (rd, r) =>
@@ -837,8 +864,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     (!cntl.b_fire || mesh.io.b.fire || !mesh.io.b.ready) &&
     (!cntl.d_fire || mesh.io.d.fire || !mesh.io.d.ready) &&
     (!cntl.first || mesh.io.req.ready)
-
+  val queue_deq_ready_test = RegNext(mesh.io.a.valid && mesh.io.b.valid && mesh.io.d.valid)
+  dontTouch(queue_deq_ready_test)
   val dataA_valid = cntl.a_garbage || cntl.a_unpadded_cols === 0.U || Mux(cntl.im2colling, im2ColValid, Mux(cntl.a_read_from_acc, accReadValid(cntl.a_bank_acc), readValid(cntl.a_bank)))
+  /* val cntl_a_garbage_reg = RegNext(cntl.a_garbage)
+  val cntl_a_unpadded_cols_reg = RegNext(cntl.a_unpadded_cols)
+  dontTouch(cntl_a_garbage_reg)
+  dontTouch(cntl_a_unpadded_cols) */
 
   val dataB_valid = cntl.b_garbage || cntl.b_unpadded_cols === 0.U || MuxCase(readValid(cntl.b_bank), Seq(
     cntl.accumulate_zeros -> false.B,
@@ -862,18 +894,32 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val dataB = VecInit(dataB_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, inputType.zero)})
   val dataD = VecInit(dataD_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.d_unpadded_cols, d, inputType.zero)})
 
-  /* val checkbitgenerator = Module(new CheckBitGenerator(inputType))
-  val damn = RegInit(VecInit(Seq.fill(16)(0.U.asTypeOf(inputType))))
-  val damn_1 = RegInit(VecInit(Seq.fill(16)(0.U.asTypeOf(inputType))))
-  val damn_2 = RegInit(0.U.asTypeOf(inputType))
-  for (i <- 0 until 16) {
-        damn(i) := checkbitgenerator.io.a_out.bits(i)
-        damn_1(i) := checkbitgenerator.io.col_addresult.bits(i)
-      }
-  damn_2 := checkbitgenerator.io.row_addresult.bits
-  dontTouch(damn)
-  dontTouch(damn_1)
-  dontTouch(damn_2) */ 
+  //测试校验位添加模块
+  val dataA_test = VecInit(readData(cntl.a_bank).asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.a_unpadded_cols, d, inputType.zero)})
+  val dataB_test = VecInit(readData(cntl.b_bank).asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, inputType.zero)})
+  val dataD_test = VecInit(readData(cntl.d_bank).asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.d_unpadded_cols, d, inputType.zero)})
+  val CheckBitGenerator_test_dataA = Module(new CheckBitGenerator(meshColumns * tileColumns, meshRows * tileRows, inputType, accType))
+  CheckBitGenerator_test_dataA.io.dataIn := dataA_test.asTypeOf(CheckBitGenerator_test_dataA.io.dataIn)
+  CheckBitGenerator_test_dataA.io.validIn := io.srams.read(dataA_spadbank).resp.valid
+  val CheckBitGenerator_test_dataB = Module(new CheckBitGenerator(meshColumns * tileColumns, meshRows * tileRows, inputType, accType))
+  CheckBitGenerator_test_dataB.io.dataIn := dataB_test.asTypeOf(CheckBitGenerator_test_dataB.io.dataIn)
+  CheckBitGenerator_test_dataB.io.validIn := io.srams.read(dataB_spadbank).resp.valid
+  val CheckBitGenerator_test_dataD = Module(new CheckBitGenerator(meshColumns * tileColumns, meshRows * tileRows, inputType, accType))
+  CheckBitGenerator_test_dataD.io.dataIn := dataD_test.asTypeOf(CheckBitGenerator_test_dataD.io.dataIn)
+  CheckBitGenerator_test_dataD.io.validIn := io.srams.read(dataD_spadbank).resp.valid
+  //测试Shield
+  val Shield_test = Module(new Shield(meshColumns * tileColumns, meshRows * tileRows, inputType, accType, tileColumns, meshColumns, tile_latency+1))
+  Shield_test.io.dataA := dataA_test.asTypeOf(Shield_test.io.dataA)
+  Shield_test.io.dataA_valid := io.srams.read(dataA_spadbank).resp.valid
+  Shield_test.io.dataA_colsum := CheckBitGenerator_test_dataA.io.colSums
+  Shield_test.io.dataA_colsum_valid := CheckBitGenerator_test_dataA.io.validOut
+  Shield_test.io.dataD := dataD_test.asTypeOf(Shield_test.io.dataA)
+  Shield_test.io.dataD_valid := io.srams.read(dataD_spadbank).resp.valid
+  Shield_test.io.dataD_rowsum := CheckBitGenerator_test_dataD.io.rowSums
+  Shield_test.io.dataD_rowsum_valid := CheckBitGenerator_test_dataD.io.validOut
+
+  /* val cntl_d_bank_reg = RegNext(cntl.d_bank)
+  dontTouch(cntl_d_bank_reg) */
 
   // Pop responses off the scratchpad io ports
   when (mesh_cntl_signals_q.io.deq.fire) {
@@ -907,17 +953,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       acc_r.ready := true.B
     }
   } 
-    /* checkbitgenerator.io.a.bits := DontCare
-    checkbitgenerator.io.a.valid := DontCare
-    checkbitgenerator.io.a_out.ready := DontCare
-    checkbitgenerator.io.col_addresult.ready := DontCare
-    checkbitgenerator.io.row_addresult.ready := DontCare */
   when (cntl_valid) {
-    /* checkbitgenerator.io.a.valid := cntl.a_fire && dataA_valid
-    checkbitgenerator.io.a.bits := dataA
-    checkbitgenerator.io.a_out.ready := true.B
-    checkbitgenerator.io.col_addresult.ready := true.B
-    checkbitgenerator.io.row_addresult.ready := true.B */
     // Default inputs
     mesh.io.a.valid := cntl.a_fire && dataA_valid
     mesh.io.b.valid := cntl.b_fire && dataB_valid
@@ -938,7 +974,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, dataA.asUInt, 0.U).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, dataB.asUInt, 0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
   }
-
+ 
   when (cntl_valid && cntl.perform_single_mul) {
     mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, 0.U, dataA.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, 0.U, dataB.asUInt).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
@@ -1081,4 +1117,40 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     PerfCounter(ex_preload_haz_cycle, "ex_preload_haz_cycle", "cycles during which the execute controller is stalling preloads due to hazards")
     PerfCounter(ex_mulpre_haz_cycle, "ex_mulpre_haz_cycle", "cycles during which the execute controller is stalling matmuls due to hazards")
   }
+  //测试检错器
+  val ErrorChecker_MatmulResult_test = Module(new ErrorChecker_MatmulResult(meshColumns * tileColumns, meshRows * tileRows, accType, acc_bank_entries, acc_banks))
+  ErrorChecker_MatmulResult_test.io.dataIn1 := MuxCase(DontCare, Seq(
+                                                io.acc.write(0).valid -> io.acc.write(0).bits.data.asTypeOf(ErrorChecker_MatmulResult_test.io.dataIn1),
+                                                io.acc.write(1).valid -> io.acc.write(0).bits.data.asTypeOf(ErrorChecker_MatmulResult_test.io.dataIn1)
+                                               ))
+  ErrorChecker_MatmulResult_test.io.dataIn1_valid := io.acc.write(0).valid ||
+                                                     io.acc.write(1).valid
+  ErrorChecker_MatmulResult_test.io.addr_banks_in := MuxCase(DontCare, Seq(
+                                                      io.acc.write(0).valid -> 0.U,
+                                                      io.acc.write(1).valid -> 1.U
+                                                     ))
+  ErrorChecker_MatmulResult_test.io.dataIn2 := Shield_test.io.Result
+  ErrorChecker_MatmulResult_test.io.dataIn2_valid := Shield_test.io.Result_valid
+  ErrorChecker_MatmulResult_test.io.a_rows := a_rows
+  ErrorChecker_MatmulResult_test.io.a_rows_valid := io.srams.read(0).req.valid
+  ErrorChecker_MatmulResult_test.io.addr_in := io.acc.write(0).bits.addr
+  // 测试延迟模块
+  val LatencySimulation_ReadSpad_InsideEx_test = Module(new LatencySimulation_ReadSpad_InsideEx(meshRows, tileRows, meshColumns, tileColumns, inputType, accType, mesh_tag))
+  LatencySimulation_ReadSpad_InsideEx_test.io.dataA_in := mesh.io.a.bits
+  LatencySimulation_ReadSpad_InsideEx_test.io.dataA_Valid_in := mesh.io.a.valid
+  LatencySimulation_ReadSpad_InsideEx_test.io.cntl_in := mesh.io.req.bits
+  LatencySimulation_ReadSpad_InsideEx_test.io.cntl_Valid_in := mesh.io.req.valid
+  LatencySimulation_ReadSpad_InsideEx_test.io.Verification_completed := io.Verification_completed_in && io.addr_banks === dataA_spadbank
+
+  io.Verification_completed := ErrorChecker_MatmulResult_test.io.Verification_completed
+  io.checksum := ErrorChecker_MatmulResult_test.io.checksum
+  io.checksum_addr := ErrorChecker_MatmulResult_test.io.addr_out
+  io.checksum_addr_banks := ErrorChecker_MatmulResult_test.io.addr_banks_out
+  io.checksum_valid := ErrorChecker_MatmulResult_test.io.checksum_valid
+  io.a_rows := a_rows
+/*   io.Verification_completed := DontCare
+  io.checksum := DontCare
+  io.checksum_addr := DontCare
+  io.checksum_valid := DontCare
+  io.a_rows := a_rows */
 }

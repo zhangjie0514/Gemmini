@@ -7,7 +7,7 @@ import Util._
 import org.chipsalliance.cde.config.Parameters
 import midas.targetutils.PerfCounter
 
-class Add_test[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], coreMaxAddrBits: Int,
+class Add_test123[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], coreMaxAddrBits: Int,
                                                       local_addr_t: LocalAddr)
                                (implicit p: Parameters) extends Module {
   import config._
@@ -55,6 +55,7 @@ class Add_test[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U,
   val state = RegInit(State.idle)
 
   io.cmd.ready := (state === State.idle)
+
   io.completed.valid := (state === State.done)
   io.completed.bits := rob_id_reg
 
@@ -83,6 +84,45 @@ class Add_test[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U,
         state := State.idle
         //io.cmd.ready := true.B
         //io.completed.valid := true.B
+    }
+  }
+}
+
+class Add_test[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], coreMaxAddrBits: Int,
+                                                      local_addr_t: LocalAddr)
+                               (implicit p: Parameters) extends Module {
+  import config._
+
+  val io = IO(new Bundle {
+    val cmd = Flipped(Decoupled(new GemminiCmd(reservation_station_entries)))
+
+    val completed = Decoupled(UInt(log2Up(reservation_station_entries).W)) //6.W
+  })
+
+  val rob_id_reg = RegInit(0.U(6.W))
+
+  object State extends ChiselEnum {
+    val idle, done = Value
+  }
+  val state = RegInit(State.idle)
+
+  io.cmd.ready := true.B
+  
+  io.completed.valid := false.B
+  io.completed.bits := rob_id_reg
+
+  //状态转换
+  switch(state){
+    is(State.idle){
+      when(io.cmd.fire){
+          state := State.done
+          rob_id_reg := io.cmd.bits.rob_id.bits
+      }
+    }
+    is(State.done){
+      when(io.completed.fire){
+        state := State.idle
+      }
     }
   }
 }

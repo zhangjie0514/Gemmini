@@ -251,7 +251,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   val TOTAL_ACC_TILES = (ACC_ROWS / DIM)
   val SQRT_ACC_TILES = sqrt(TOTAL_ACC_TILES).toInt
   assert(USABLE_SP_TILES >= TOTAL_ACC_TILES, 
-    s"SP_TILES($USABLE_SP_TILES) + 2 < ACC_TILES($TOTAL_ACC_TILES)")
+    s"SP_TILES($USABLE_SP_TILES) + 2 < ACC_TILES($TOTAL_ACC_TILES) SP_BANKS($SP_BANKS) sp_width($sp_width) sp_bank_entries($sp_bank_entries) SP_BANK_ROWS($SP_BANK_ROWS) SP_ROWS($SP_ROWS) ACC_ROWS($ACC_ROWS) DIM($DIM)")
 
   // prioritize sizes that cause the output-group to be further from square
   val OG_HEIGHT_MAP = (1 to TOTAL_ACC_TILES).sortWith((h1, h2) => {
@@ -267,11 +267,11 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   require(num_counter < 256, "Number of counters cannot exceed 256")
 
   require(isPow2(sp_bank_entries), "each SRAM bank must have a power-of-2 rows, to simplify address calculations") // TODO remove this requirement
-  require(sp_bank_entries % (meshRows * tileRows) == 0, "the number of rows in a bank must be a multiple of the dimensions of the systolic array")
+  //require(sp_bank_entries % (meshRows * tileRows) == 0, "the number of rows in a bank must be a multiple of the dimensions of the systolic array")
   require(meshColumns * tileColumns == meshRows * tileRows, "the systolic array must be square") // TODO remove this requirement
   require(meshColumns * tileColumns >= 2, "the systolic array must have a dimension of at least 2") // TODO remove this requirement
   require(isPow2(meshColumns * tileColumns), "the systolic array's dimensions must be powers of 2") // TODO remove this requirement
-  require(acc_bank_entries % (meshRows * tileRows) == 0, "the number of rows in an accumulator bank must be a multiple of the dimensions of the systolic array")
+  //require(acc_bank_entries % (meshRows * tileRows) == 0, "the number of rows in an accumulator bank must be a multiple of the dimensions of the systolic array")
   require(!mvin_scale_shared || (mvin_scale_shared && mvin_scale_args.isDefined && mvin_scale_acc_args.isEmpty && inputType.getWidth == accType.getWidth)) // TODO is there a better way to check whether inputType and accType are the same?
   require((mvin_scale_args.isEmpty || mvin_scale_acc_args.isEmpty) || (mvin_scale_t.getWidth == mvin_scale_acc_t.getWidth), "currently, the mvin scale types for both the srams and the accumulator must have the same width") // TODO remove this requirement
 

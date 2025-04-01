@@ -110,7 +110,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val deps_add_test = Vec(4, Bool()) //2024.11.10修改
 
     //表示这个条目是否准备好被发出
-    def ready(dummy: Int = 0): Bool = !(deps_ld.reduce(_ || _) || deps_ex.reduce(_ || _) || deps_st.reduce(_ || _) || deps_add_test.reduce(_ || _)) ////2024.11.10修改
+    def ready(dummy: Int = 0): Bool = !(deps_ld.reduce(_ || _) || deps_ex.reduce(_ || _) || deps_st.reduce(_ || _) || deps_add_test.reduce(_ || _)) //2024.11.10修改
 
     // Debugging signals
     val allocated_at = UInt(instructions_allocated.getWidth.W)
@@ -316,7 +316,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX)
     val is_store = funct === STORE_CMD || (funct === CONFIG_CMD && (config_cmd_type === CONFIG_STORE || config_cmd_type === CONFIG_NORM))
     val is_norm = funct === CONFIG_CMD && config_cmd_type === CONFIG_NORM // normalization commands are a subset of store commands, so they still go in the store queue
-    val is_add_test = funct === ADD_TEST //2021.11.10修改
+    val is_add_test = funct === ADD_TEST || funct === PRINT //2021.11.10修改
 
     //判断指令将被放置到哪个队列中
     new_entry.q := Mux1H(Seq(
@@ -343,7 +343,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
       new_entry.deps_st := VecInit(entries_st.map { e => e.valid && e.bits.opa.valid && not_config &&
         new_entry.opa.bits.overlaps(e.bits.opa.bits)})  // war
-      new_entry.deps_add_test := VecInit(entries_add_test.map{ e => e.valid && !e.bits.issued}) //2024.11.10修改 
+      new_entry.deps_add_test := VecInit(Seq.fill(4)(false.B)) //2024.11.10修改 
     }.elsewhen (is_ex) {
       // raw (after ld) | war (after st) | waw (after ld)
       new_entry.deps_ld := VecInit(entries_ld.map { e => e.valid && e.bits.opa.valid && not_config && (
@@ -354,11 +354,11 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
       new_entry.deps_st := VecInit(entries_st.map { e => e.valid && e.bits.opa.valid && not_config && new_entry.opa_is_dst &&
         new_entry.opa.bits.overlaps(e.bits.opa.bits)})  // war
-      new_entry.deps_add_test := VecInit(entries_add_test.map{ e => e.valid && !e.bits.issued}) //2024.11.10修改
+      new_entry.deps_add_test := VecInit(Seq.fill(4)(false.B)) //2024.11.10修改
     }.elsewhen (is_add_test){ //2024.11.10修改
-      new_entry.deps_ld := VecInit(Seq.fill(reservation_station_entries_ld)(false.B))
-      new_entry.deps_ex := VecInit(Seq.fill(reservation_station_entries_ex)(false.B))
-      new_entry.deps_st := VecInit(Seq.fill(reservation_station_entries_st)(false.B))
+      new_entry.deps_ld := VecInit(entries_ld.map { e => e.valid && !e.bits.issued })
+      new_entry.deps_ex := VecInit(entries_ex.map { e => e.valid && !e.bits.issued })
+      new_entry.deps_st := VecInit(entries_st.map { e => e.valid && !e.bits.issued })
       new_entry.deps_add_test := VecInit(entries_add_test.map{ e => e.valid && !e.bits.issued}) 
     }.otherwise {
       // raw (after ld/ex)
@@ -369,12 +369,12 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
         e.bits.opa_is_dst && new_entry.opa.bits.overlaps(e.bits.opa.bits)}) // raw only if ex is preload
 
       new_entry.deps_st := VecInit(entries_st.map { e => e.valid && !e.bits.issued }) // same q
-      new_entry.deps_add_test := VecInit(entries_add_test.map{ e => e.valid && !e.bits.issued}) //2024.11.10修改
+      new_entry.deps_add_test := VecInit(Seq.fill(4)(false.B)) //2024.11.10修改
     }
 
     new_entry.allocated_at := instructions_allocated//将新条目分配时的指令计数记录下来
 
-    new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exq
+    new_entry.complete_on_issue := (new_entry.is_config && new_entry.q =/= exq) || new_entry.q === add_testq
     //配置指令通常在发出时就可以完成，因为它们主要用于设置硬件参数，而不需要实际数据处理。
     //但如果配置指令属于执行队列（exq），则可能涉及更多的操作，不一定能在发出时立即完成。
 
@@ -382,7 +382,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       (ldq, entries_ld, new_allocs_oh_ld, reservation_station_entries_ld),
       (exq, entries_ex, new_allocs_oh_ex, reservation_station_entries_ex),
       (stq, entries_st, new_allocs_oh_st, reservation_station_entries_st),
-      (add_testq, entries_add_test, new_allocs_oh_add_test, 2)) //2024.11.10修改
+      (add_testq, entries_add_test, new_allocs_oh_add_test, 4)) //2024.11.10修改
       .foreach { case (q, entries_type, new_allocs_type, entries_count) =>
         when (new_entry.q === q) {
           val is_full = PopCount(Seq(dst.valid, op1.valid, op2.valid)) > 1.U//判断一个条目中是否有多个有效操作数
